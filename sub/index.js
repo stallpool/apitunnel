@@ -28,7 +28,7 @@ function ping(ws, interval) {
    setTimeout(ping, interval, ws, interval);
 }
 
-async function build(method, uri, payload) {
+async function build(method, uri, payload, id) {
    console.log('[D]', new Date().toISOString(), method, uri, payload);
    const parts = uri.split('/');
    parts.shift(); parts.shift(); // e.g. /pub/<region>/<site>/...
@@ -40,10 +40,16 @@ async function build(method, uri, payload) {
    // region + site --> url, here just an example to map somename + site -> site.somename
    let baseUrl;
    switch (region) {
-   case 'somename': baseUrl = 'somesite'; break;
+   case 'somename': baseUrl = `https://${site}.somesite`; break;
    default: return null;
    }
-   const url = `https://${site}.${baseUrl}/${remain}`;
+   if (!baseUrl) throw `no such region "${region}"`;
+   if (
+      !baseUrl.startsWith('https://') &&
+      !baseUrl.startsWith('http://')
+   ) throw `not supported protocol "${baseUrl.split(':')[0]}"`;
+   const url = `${baseUrl}/${remain}`;
+   // TODO: websocket, the same id, use the same ws client agent
 
    if (method === 'POST') {
       payload = payload && Buffer.from(payload, 'base64');
@@ -81,7 +87,7 @@ function connect() {
          const payload = data.data;
          if (!id || !method || !uri) return;
          try {
-            const obj = await build(method, uri, payload);
+            const obj = await build(method, uri, payload, id);
             if (!obj || obj.error) throw 'error';
             if (obj.redirect) throw 'not supported';
             const r = { id, headers: obj.headers, data: obj.buf.toString('base64') };

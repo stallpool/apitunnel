@@ -57,6 +57,7 @@ function addWsPathHandler(server, path, fn, opt) {
       const configs = Object.values(env.pathConfig);
       for (const config of configs) {
          env.wss.handleUpgrade(req, socket, head, (ws) => {
+            ws._meta_ = { ip: `${req.connection.remoteAddress || req.headers['x-forwarded-for']}` };
             env.wss.emit('connection', ws, req, config.path);
          });
          return;

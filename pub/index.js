@@ -3,6 +3,11 @@
 const i_fs = require('fs');
 const i_path = require('path');
 const i_url = require('url');
+const i_crypto = require('crypto');
+
+function hash(text, salt) {
+   return i_crypto.createHmac('sha512', salt || '').update(text).digest('hex');
+}
 
 const i_env = {
    debug: !!process.env.TINY_DEBUG,
@@ -167,6 +172,8 @@ const pubenv = {
          pubenv.taskc --;
       });
    }, 1000),
+   salt: process.env.PUB_SALT,
+   token: process.env.PUB_TOKEN ? hash(process.env.PUB_TOKEN, process.env.PUB_SALT) : null,
 };
 
 const server = createServer({
@@ -197,6 +204,18 @@ const server = createServer({
 });
 
 i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
+   if (!local.bind) {
+      if (pubenv.token) {
+         if (m.cmd === 'auth' && pubenv.token === hash(m.token, pubenv.salt)) {
+            local.bind = true;
+            pubenv.ws = ws;
+            console.log(`[I] ${ws._meta_?.ip} connected with token`);
+         } else {
+            safeClose(ws);
+         }
+      }
+      return;
+   }
    if (!m.id || (!m.data && !m.code)) return;
    const id = m.id;
    const task = pubenv.task[id];
@@ -227,8 +246,11 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
          safeClose(ws);
          return;
       }
-      local.bind = true;
-      pubenv.ws = ws;
+      if (!pubenv.token) {
+         local.bind = true;
+         pubenv.ws = ws;
+         console.log(`[I] ${ws._meta_?.ip} connected`);
+      }
    },
    onClose: (ws, local) => {
       if (local.bind) pubenv.ws = null;

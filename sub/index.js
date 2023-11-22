@@ -3,6 +3,7 @@ const i_download = require('./request').download;
 
 const env = {
    target: process.env.PUB_URL,
+   token: process.env.PUB_TOKEN,
    ws: null,
    connN: 0,
    ticket: {},
@@ -58,6 +59,7 @@ function connect() {
       const ws = new i_ws.WebSocket(env.target);
       env.ws = ws;
       ws.on('open', () => {
+         if (env.token) safeSendJson(ws, { cmd: 'auth', token: env.token });
          console.log(`[I] connected.`);
       });
       ws.on('error', (err) => {

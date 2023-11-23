@@ -7,6 +7,7 @@ const env = {
    ws: null,
    connN: 0,
    ticket: {},
+   wsc: {},
 };
 
 function safeClose(ws) {
@@ -28,35 +29,95 @@ function ping(ws, interval) {
    setTimeout(ping, interval, ws, interval);
 }
 
-async function build(method, uri, payload, id) {
+function ping2(ws, interval) {
+   if (!ws || ws.readyState !== i_ws.WebSocket.OPEN) return;
+   ws.ping();
+   setTimeout(ping2, interval, ws, interval);
+}
+
+const supported_protocols = [
+   'http', 'https', 'ws', 'wss',
+];
+
+async function bridgeHttp(ws, url, payload, method, id) {
+   let obj;
+   if (method === 'POST') {
+      payload = payload && Buffer.from(payload, 'base64');
+      obj = await i_download(url, { method, payload });
+   } else {
+      obj = await i_download(url, { method });
+   }
+   if (!obj || obj.error) throw 'error';
+   if (obj.redirect) throw 'not supported';
+   const r = { id, headers: obj.headers, data: obj.buf.toString('base64') };
+   safeSendJson(ws, r);
+}
+
+async function bridgeWebsocket(ws, url, payload, method, id) {
+   const obj = env.wsc[id];
+   if (obj) {
+      await obj.promise;
+      if (method === 'close') {
+         safeClose(obj.wsc);
+      } else {
+         safeSend(obj.wsc, payload ? Buffer.from(payload, 'base64') : '');
+      }
+   } else {
+      const wsc = new i_ws.WebSocket(url);
+      let initWaitOk;
+      const initWaitP = new Promise((r) => { initWaitOk = r; });
+      env.wsc[id] = { promise: initWaitP, wsc };
+      wsc.on('open', () => {
+         console.log('[I] websocket open', id);
+         initWaitOk();
+      });
+      wsc.on('error', (err) => {
+         console.log('[E] websocket error', id, err);
+         delete env.wsc[id];
+      });
+      wsc.on('close', () => {
+         console.log('[I] websocket close', id);
+         safeSendJson(ws, { id, ws: true, code: 0 });
+         delete env.wsc[id];
+      });
+      wsc.on('message', async (data) => {
+         try {
+            if (!data || data.length > 1*1024*1024 /* 1M */) throw '400: empty or too large';
+            safeSendJson(ws, { id, ws: true, data: Buffer.from(data).toString('base64') });
+         } catch (err) {
+            safeSendJson(ws, { id, ws: true, code: 500 });
+         }
+      });
+      setTimeout(() => ping2(wsc, 30*1000), 30*1000);
+   }
+}
+
+async function build(ws, method, uri, payload, id) {
    console.log('[D]', new Date().toISOString(), method, uri, payload);
    const parts = uri.split('/');
    parts.shift(); parts.shift(); // e.g. /pub/<region>/<site>/...
    const region = parts.shift();
    const site = parts.shift();
-   if (parts.length === 0) return null;
    const remain = parts.join('/');
 
    // region + site --> url, here just an example to map somename + site -> site.somename
    let baseUrl;
    switch (region) {
    case 'somename': baseUrl = `https://${site}.somesite`; break;
+   case 'somews': baseUrl = `ws://${site}.somesite`; break;
    default: return null;
    }
    if (!baseUrl) throw `no such region "${region}"`;
-   if (
-      !baseUrl.startsWith('https://') &&
-      !baseUrl.startsWith('http://')
-   ) throw `not supported protocol "${baseUrl.split(':')[0]}"`;
+   const protocol = baseUrl.split('://')[0];
+   if (!supported_protocols.includes(protocol)) throw `not supported protocol "${protocol}"`;
    const url = `${baseUrl}/${remain}`;
-   // TODO: websocket, the same id, use the same ws client agent
-
-   if (method === 'POST') {
-      payload = payload && Buffer.from(payload, 'base64');
-      return await i_download(url, { method, payload });
-   } else {
-      return await i_download(url, { method });
+   if (protocol === 'http' || protocol === 'https') {
+      return await bridgeHttp(ws, url, payload, method, id);
    }
+   if (protocol === 'ws' || protocol === 'wss') {
+      return await bridgeWebsocket(ws, url, payload, method, id);
+   }
+   throw 'should not be here';
 }
 
 function connect() {
@@ -77,9 +138,7 @@ function connect() {
          env.ws = null;
       });
       ws.on('message', async (data) => {
-         if (!data || data.length > 10*1024 /* 10K */) {
-            return;
-         }
+         if (!data || data.length > 1*1024*1024 /* 1M */) return;
          try { data = JSON.parse(data); } catch (err) { data = {}; }
          const id = data.id;
          const method = data.method;
@@ -87,11 +146,7 @@ function connect() {
          const payload = data.data;
          if (!id || !method || !uri) return;
          try {
-            const obj = await build(method, uri, payload, id);
-            if (!obj || obj.error) throw 'error';
-            if (obj.redirect) throw 'not supported';
-            const r = { id, headers: obj.headers, data: obj.buf.toString('base64') };
-            safeSendJson(ws, r);
+            await build(ws, method, uri, payload, id);
          } catch (err) {
             safeSendJson(ws, { id, code: 500 });
          }

@@ -15,7 +15,7 @@ function addWsPathHandler(server, path, fn, opt) {
    const config = env.pathConfig[path];
    config.path = path;
    config.fn = fn;
-   config.opt = opt;
+   config.opt = opt || {};
    if (env.wss) return;
    // lazy init
    env.wss = new i_ws.WebSocketServer({ noServer: true });
@@ -30,7 +30,7 @@ function addWsPathHandler(server, path, fn, opt) {
       const onClose = config.opt.onClose;
       const onError = config.opt.onError;
       const timeout = config.opt.timeout;
-      const local = { ws, path };
+      const local = { ws, path: req.url };
       onOpen && onOpen(ws, local);
       if (timeout > 0) setTimeout(() => (!local.authenticated) && ws.terminate(), timeout);
       ws.on('close', () => {
@@ -43,8 +43,8 @@ function addWsPathHandler(server, path, fn, opt) {
       });
       ws.on('message', (m) => {
          try {
-            if (!m.length || m.length > 10*1024*1024 /* 10MB */) throw 'invalid message';
-            m = JSON.parse(m);
+            if (!m.length || m.length > 1*1024*1024 /* 1MB */) throw 'invalid message';
+            if (!config.opt.rawMode) m = JSON.parse(m);
             fn && fn(ws, local, m);
          } catch(err) {
             ws.terminate();

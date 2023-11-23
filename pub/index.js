@@ -172,6 +172,9 @@ const pubenv = {
          pubenv.taskc --;
       });
    }, 1000),
+   wsenable: !!process.env.PUB_WS,
+   wsid: 0,
+   wstask: {},
    salt: process.env.PUB_SALT,
    token: process.env.PUB_TOKEN ? hash(process.env.PUB_TOKEN, process.env.PUB_SALT) : null,
 };
@@ -187,7 +190,7 @@ const server = createServer({
       pubenv.id = id;
       if (req.method == 'POST') {
          try {
-            data = (await readRequest(req, 10240 /*10K*/)).toString('base64');
+            data = (await readRequest(req, 1*1024*1024 /*1M*/)).toString('base64');
          } catch(err) {
             res.writeHead(400); res.end(); return;
          }
@@ -203,6 +206,71 @@ const server = createServer({
    },
 });
 
+if (pubenv.wsenable) { console.log(`APITUNNEL-pub: Websocket enabled.`);
+
+// (connections) <--> pub <---tunnel---> sub <--> (connections)
+// TODO: add a queue to seq + rate limit send
+//       to have better management on bandwidth
+i_makeWebsocket(server, 'pub4websocket', '/pubws', (ws, local, m) => {
+   safeSendJson(pubenv.ws, { id: local.id, uri: local.path, method: 'message', data: Buffer.from(m).toString('base64') });
+}, {
+   rawMode: true,
+   onOpen: (ws, local) => {
+      if (!pubenv.ws) {
+         safeClose(ws);
+         return;
+      }
+      let id = (pubenv.wsid + 1) % 10000000;
+      while (pubenv.wstask[id]) id = (pubenv.wsid + 1) % 10000000;
+      local.id = id;
+      pubenv.wsid = id;
+      pubenv.wstask[id] = {
+         ts: new Date().getTime(),
+         id, ws,
+         uri: local.path,
+      };
+      safeSendJson(pubenv.ws, { id: local.id, uri: local.path, method: 'open' });
+   },
+   onClose: (ws, local) => {
+      delete pubenv.wstask[local.id];
+      safeSendJson(pubenv.ws, { id: local.id, uri: local.path, method: 'close' });
+   },
+   onError: (err, ws, local) => {},
+});
+
+} // check wsenable
+
+function handleWebsocket(m, task) {
+   if (!m || !task) return;
+   const wsu = task.ws;
+   if (m.code === 0) {
+      safeClose(wsu);
+      return;
+   } else if (m.code === 500) {
+      // XXX: handle exception
+      return;
+   }
+   const buf = Buffer.from(m.data || '', 'base64');
+   safeSend(wsu, buf);
+}
+
+function handleHttp(m, task) {
+   if (!m || !task) return;
+   const res = task.res;
+   const headers = m.headers || {};
+   if (m.data) {
+      const buf = Buffer.from(m.data, 'base64');
+      if (headers['content-length']) {
+         headers['content-length'] = buf.length;
+      }
+      Object.keys(headers).forEach(k => res.setHeader(k, headers[k]));
+      res.end(buf);
+   } else {
+      res.writeHead(m.code);
+      res.end();
+   }
+}
+
 i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
    if (!local.bind) {
       if (pubenv.token) {
@@ -216,33 +284,24 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
       }
       return;
    }
-   if (!m.id || (!m.data && !m.code)) return;
-   const id = m.id;
-   const task = pubenv.task[id];
-   if (!task) return;
-   const res = task.res;
-   const headers = m.headers || {};
-   try {
-      if (m.data) {
-         const buf = Buffer.from(m.data, 'base64');
-         if (headers['content-length']) {
-            headers['content-length'] = buf.length;
-         }
-         Object.keys(headers).forEach(k => res.setHeader(k, headers[k]));
-         res.end(buf);
-      } else {
-         res.writeHead(m.code);
-         res.end();
+   if (!m.id || (!m.data && isNaN(m.code))) return;
+   if (m.ws) {
+      handleWebsocket(m, pubenv.wstask[m.id]);
+   } else {
+      try {
+         handleHttp(m, pubenv.task[m.id]);
+      } catch(err) {
+         console.log('[E]', new Date().toISOString(), err);
       }
-   } catch(err) {
-      console.log('[E]', new Date().toISOString(), err);
+      delete pubenv.task[m.id];
+      pubenv.taskc --;
+      pubenv.taskgc();
    }
-   delete pubenv.task[id];
-   pubenv.taskc --;
-   pubenv.taskgc();
 }, {
    onOpen: (ws, local) => {
       if (pubenv.ws) {
+         // TODO: support multiple bindings
+         //       act as a gateway for micro services
          safeClose(ws);
          return;
       }

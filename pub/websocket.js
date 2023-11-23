@@ -30,7 +30,7 @@ function addWsPathHandler(server, path, fn, opt) {
       const onClose = config.opt.onClose;
       const onError = config.opt.onError;
       const timeout = config.opt.timeout;
-      const local = { ws };
+      const local = { ws, path };
       onOpen && onOpen(ws, local);
       if (timeout > 0) setTimeout(() => (!local.authenticated) && ws.terminate(), timeout);
       ws.on('close', () => {
@@ -56,6 +56,7 @@ function addWsPathHandler(server, path, fn, opt) {
       // authenticate: socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy();
       const configs = Object.values(env.pathConfig);
       for (const config of configs) {
+         if (req.url !== config.path && !req.url.startsWith(`${config.path}/`)) continue;
          env.wss.handleUpgrade(req, socket, head, (ws) => {
             ws._meta_ = { ip: `${req.connection.remoteAddress || req.headers['x-forwarded-for']}` };
             env.wss.emit('connection', ws, req, config.path);

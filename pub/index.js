@@ -195,14 +195,16 @@ const server = createServer({
             res.writeHead(400); res.end(); return;
          }
       }
+      const headers = Object.assign({}, req.headers);
       pubenv.task[id] = {
          ts: new Date().getTime(),
          id, res, data,
          method: req.method,
          uri: req.url,
+         opt: { headers, }
       };
       pubenv.taskc ++;
-      safeSendJson(pubenv.ws, { id, data, method: req.method, uri: req.url });
+      safeSendJson(pubenv.ws, { id, data, method: req.method, uri: req.url, headers });
    },
 });
 

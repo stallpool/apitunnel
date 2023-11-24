@@ -39,13 +39,21 @@ const supported_protocols = [
    'http', 'https', 'ws', 'wss',
 ];
 
-async function bridgeHttp(ws, url, payload, method, id) {
+const allowed_headers = ['content-type', 'user-agent', 'content-length'];
+async function bridgeHttp(ws, url, payload, method, id, rawobj) {
    let obj;
+   const httpopt = {};
+   if (rawobj?.headers) {
+      httpopt.headers = Object.assign({}, rawobj.headers);
+      Object.keys(httpopt.headers).forEach(x => {
+         if (!allowed_headers.includes(x)) delete httpopt.headers[x];
+      });
+   }
    if (method === 'POST') {
       payload = payload && Buffer.from(payload, 'base64');
-      obj = await i_download(url, { method, payload });
+      obj = await i_download(url, { ...httpopt, method, payload });
    } else {
-      obj = await i_download(url, { method });
+      obj = await i_download(url, { ...httpopt, method });
    }
    if (!obj || obj.error) throw 'error';
    if (obj.redirect) throw 'not supported';
@@ -53,7 +61,7 @@ async function bridgeHttp(ws, url, payload, method, id) {
    safeSendJson(ws, r);
 }
 
-async function bridgeWebsocket(ws, url, payload, method, id) {
+async function bridgeWebsocket(ws, url, payload, method, id, rawobj) {
    const obj = env.wsc[id];
    if (obj) {
       await obj.promise;
@@ -92,7 +100,7 @@ async function bridgeWebsocket(ws, url, payload, method, id) {
    }
 }
 
-async function build(ws, method, uri, payload, id) {
+async function build(ws, method, uri, payload, id, rawobj) {
    console.log('[D]', new Date().toISOString(), method, uri, payload);
    const parts = uri.split('/');
    parts.shift(); parts.shift(); // e.g. /pub/<region>/<site>/...
@@ -112,10 +120,10 @@ async function build(ws, method, uri, payload, id) {
    if (!supported_protocols.includes(protocol)) throw `not supported protocol "${protocol}"`;
    const url = `${baseUrl}/${remain}`;
    if (protocol === 'http' || protocol === 'https') {
-      return await bridgeHttp(ws, url, payload, method, id);
+      return await bridgeHttp(ws, url, payload, method, id, rawobj);
    }
    if (protocol === 'ws' || protocol === 'wss') {
-      return await bridgeWebsocket(ws, url, payload, method, id);
+      return await bridgeWebsocket(ws, url, payload, method, id, rawobj);
    }
    throw 'should not be here';
 }
@@ -144,9 +152,10 @@ function connect() {
          const method = data.method;
          const uri = data.uri;
          const payload = data.data;
+         const rawobj = data;
          if (!id || !method || !uri) return;
          try {
-            await build(ws, method, uri, payload, id);
+            await build(ws, method, uri, payload, id, rawobj);
          } catch (err) {
             safeSendJson(ws, { id, code: 500 });
          }

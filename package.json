@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "ws": "^8.14.2"
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "bufferutil": "^4.0.8",

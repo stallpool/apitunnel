@@ -31,11 +31,10 @@ function handleConnection(ws, req, path, cfg) {
       local.closed = true;
       onError && onError(err, ws, local);
    });
-   ws.on('message', (m, isBinary) => {
+   ws.on('message', (m) => {
       try {
          if (!m.length || m.length > 10*1024*1024 /* 10MB */) throw 'invalid message';
          if (!cfg.opt?.raw) m = JSON.parse(m);
-         local.isBinary = isBinary;
          cfg.fn && cfg.fn(ws, local, m);
       } catch(err) {
          try { ws.terminate(); } catch(_) {}
@@ -64,7 +63,7 @@ function addWsPathHandler(server, path, fn, opt) {
          env.wss.handleUpgrade(req, socket, head, (ws) => {
             ws._meta_ = {
                ip: `${req.connection.remoteAddress || req.headers['x-forwarded-for']}`,
-               url: rpath,
+               url: rpath || '/',
             };
             env.wss.emit('connection', ws, req, rpath || '/', config);
          });

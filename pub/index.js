@@ -137,6 +137,11 @@ function safeSend(ws, buf) {
    if (ws.readyState !== ws.OPEN) return;
    try { ws.send(buf); } catch(err) { }
 }
+function safeSendBin(ws, buf) {
+   if (!ws) return;
+   if (ws.readyState !== ws.OPEN) return;
+   try { ws.send(buf, { isBinary: true }); } catch(err) { }
+}
 function safeSendJson(ws, json) {
    safeSend(ws, JSON.stringify(json));
 }
@@ -217,7 +222,31 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
       }
       return;
    }
-   if (!m.id || (!m.data && !m.code)) return;
+
+   if (!m.id) return;
+
+   if (m.id > http_max_id && m.id < ws_max_id && m.mode === 'ws') {
+      const wsobj = pubenv.task[m.id];
+      if (!wsobj) return;
+      if (m.act === 'close') {
+         safeClose(wsobj.ws);
+      } else if (m.act === 'open') {
+         wsobj.bin = !!m.bin;
+         wsobj.r();
+      } else if (m.data) {
+         try {
+            const buf = Buffer.from(m.data, 'base64');
+            if (wsobj.bin) {
+               safeSendBin(wsobj.ws, buf);
+            } else {
+               safeSend(wsobj.ws, buf.toString());
+            }
+         } catch (_) {}
+      }
+      return;
+   }
+
+   if (!m.data && !m.code) return;
    const id = m.id;
    const task = pubenv.task[id];
    if (!task) return;
@@ -265,11 +294,10 @@ i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
    const task = pubenv.task[local.pubid];
    const data = {
       id: local.pubid,
-      ws: true,
-      bin: local.isBinary,
+      mode: 'ws',
       data: m.toString('base64'),
    };
-   safeSendJson(pubenv.ws, data);
+   task.init.then(() => safeSendJson(pubenv.ws, data));
 }, {
    raw: true,
    onOpen: (ws, local) => {
@@ -278,17 +306,23 @@ i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
       for (id = http_max_id+1; id < ws_max_id && pubenv.task[id]; id++);
       if (id === ws_max_id) return safeClose(ws); // reach max rate limit
       local.pubid = id;
-      pubenv.task[id] = {
+      const task = {
          ts: new Date().getTime(),
          id, ws,
       };
+      task.init = new Promise((r, e) => {
+         task.r = r;
+         task.e = e;
+      });
+      pubenv.task[id] = task;
+      safeSendJson(pubenv.ws, { id, mode: 'ws', act: 'open', uri: ws._meta_.url })
    },
    onClose: (ws, local) => {
       const id = local.pubid;
       if (!id) return;
       const task = pubenv.task[id];
       delete pubenv.task[id];
-      safeSendJson(pubenv.ws, { id, act: 'close' });
+      safeSendJson(pubenv.ws, { id, mode: 'ws', act: 'close' });
    },
    onError: (err, ws, local) => { },
 });

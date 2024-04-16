@@ -15,6 +15,7 @@ const i_env = {
       host: process.env.TINY_HOST || '127.0.0.1',
       port: parseInt(process.env.TINY_PORT || '5001'),
       httpsCADir: process.env.TINY_HTTPS_CA_DIR?i_path.resolve(process.env.TINY_HTTPS_CA_DIR):null,
+      maxWSn: parseInt(process.env.MAX_WS_N || '10'),
    },
 };
 
@@ -256,6 +257,40 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
       if (local.bind) pubenv.ws = null;
    },
    onError: (err, ws, local) => {},
+});
+
+const http_max_id = 10000000;
+const ws_max_id = http_max_id + i_env.server.maxWSn + 1;
+i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
+   const task = pubenv.task[local.pubid];
+   const data = {
+      id: local.pubid,
+      ws: true,
+      bin: local.isBinary,
+      data: m.toString('base64'),
+   };
+   safeSendJson(pubenv.ws, data);
+}, {
+   raw: true,
+   onOpen: (ws, local) => {
+      if (!pubenv.ws) return safeClose(ws);
+      let id;
+      for (id = http_max_id+1; id < ws_max_id && pubenv.task[id]; id++);
+      if (id === ws_max_id) return safeClose(ws); // reach max rate limit
+      local.pubid = id;
+      pubenv.task[id] = {
+         ts: new Date().getTime(),
+         id, ws,
+      };
+   },
+   onClose: (ws, local) => {
+      const id = local.pubid;
+      if (!id) return;
+      const task = pubenv.task[id];
+      delete pubenv.task[id];
+      safeSendJson(pubenv.ws, { id, act: 'close' });
+   },
+   onError: (err, ws, local) => { },
 });
 
 server.listen(i_env.server.port, i_env.server.host, () => {

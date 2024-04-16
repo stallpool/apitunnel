@@ -10,6 +10,40 @@ function delWsPathHandler(path) {
    delete env.pathConfig[path];
 }
 
+function handleConnection(ws, req, path, cfg) {
+   const config = env.pathConfig[path];
+   if (!path || !cfg) {
+      try { ws.terminate(); } catch (err) { }
+      return;
+   }
+   const onOpen = cfg.opt.onOpen;
+   const onClose = cfg.opt.onClose;
+   const onError = cfg.opt.onError;
+   const timeout = cfg.opt.timeout;
+   const local = { ws };
+   onOpen && onOpen(ws, local);
+   if (timeout > 0) setTimeout(() => (!local.authenticated) && ws.terminate(), timeout);
+   ws.on('close', () => {
+      local.closed = true;
+      onClose && onClose(ws, local);
+   });
+   ws.on('error', (err) => {
+      local.closed = true;
+      onError && onError(err, ws, local);
+   });
+   ws.on('message', (m, isBinary) => {
+      try {
+         if (!m.length || m.length > 10*1024*1024 /* 10MB */) throw 'invalid message';
+         if (!cfg.opt?.raw) m = JSON.parse(m);
+         local.isBinary = isBinary;
+         cfg.fn && cfg.fn(ws, local, m);
+      } catch(err) {
+         try { ws.terminate(); } catch(_) {}
+         return;
+      }
+   });
+}
+
 function addWsPathHandler(server, path, fn, opt) {
    if (!env.pathConfig[path]) env.pathConfig[path] = {};
    const config = env.pathConfig[path];
@@ -19,46 +53,20 @@ function addWsPathHandler(server, path, fn, opt) {
    if (env.wss) return;
    // lazy init
    env.wss = new i_ws.WebSocketServer({ noServer: true });
-   env.wss.on('connection', (ws, req, path) => {
-      const config = env.pathConfig[path];
-      if (!path || !config) {
-         try { ws.terminate(); } catch (err) { }
-         return;
-      }
-      const fn = config.fn;
-      const onOpen = config.opt.onOpen;
-      const onClose = config.opt.onClose;
-      const onError = config.opt.onError;
-      const timeout = config.opt.timeout;
-      const local = { ws };
-      onOpen && onOpen(ws, local);
-      if (timeout > 0) setTimeout(() => (!local.authenticated) && ws.terminate(), timeout);
-      ws.on('close', () => {
-         local.closed = true;
-         onClose && onClose(ws, local);
-      });
-      ws.on('error', (err) => {
-         local.closed = true;
-         onError && onError(err, ws, local);
-      });
-      ws.on('message', (m) => {
-         try {
-            if (!m.length || m.length > 10*1024*1024 /* 10MB */) throw 'invalid message';
-            m = JSON.parse(m);
-            fn && fn(ws, local, m);
-         } catch(err) {
-            ws.terminate();
-            return;
-         }
-      });
-   });
+   env.wss.on('connection', handleConnection);
    server.on('upgrade', (req, socket, head) => {
       // authenticate: socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy();
       const configs = Object.values(env.pathConfig);
       for (const config of configs) {
+         if (!req.url.startsWith(config.path)) continue;
+         const rpath = req.url.substring(config.path.length);
+         if (rpath && rpath.charAt(0) !== '/') continue;
          env.wss.handleUpgrade(req, socket, head, (ws) => {
-            ws._meta_ = { ip: `${req.connection.remoteAddress || req.headers['x-forwarded-for']}` };
-            env.wss.emit('connection', ws, req, config.path);
+            ws._meta_ = {
+               ip: `${req.connection.remoteAddress || req.headers['x-forwarded-for']}`,
+               url: rpath,
+            };
+            env.wss.emit('connection', ws, req, rpath || '/', config);
          });
          return;
       }

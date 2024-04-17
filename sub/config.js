@@ -53,7 +53,7 @@ function readConfig(filename) {
       i_fs.readFile(filename, (err, buf) => {
          if (err) return;
          config.ts = stat.mtimeMs;
-         console.log(new Date().toString(), `[I] update config: ${env.subconfig}`);
+         console.log(`[I] ${new Date().toISOString()} update config: ${env.subconfig}`);
          try {
             const json = JSON.parse(buf);
             config.data = json;

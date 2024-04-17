@@ -127,20 +127,20 @@ async function buildWs(id, tunnel, m) {
 }
 
 function connect() {
-   console.log(`[I] connecting to "${env.target}" ...`);
+   console.log(`[I] ${new Date().toISOString()} connecting to "${env.target}" ...`);
    try {
       const ws = new i_ws.WebSocket(env.target);
       env.ws = ws;
       ws.on('open', () => {
          if (env.token) safeSendJson(ws, { cmd: 'auth', token: env.token });
-         console.log(`[I] connected.`);
+         console.log(`[I] ${new Date().toISOString()} connected.`);
       });
       ws.on('error', (err) => {
-         console.log('[E]', err);
+         console.log('[E]', new Date().toISOString(), err);
          env.ws = null;
       });
       ws.on('close', () => {
-         console.log('[I] disconnected');
+         console.log(`[I] ${new Date().toISOString()} disconnected`);
          // XXX: disconnect all websocket channel; alternatively,
          //      we keep a timeout threshold and after that close all
          //      so that we can have some tolarence on network failure

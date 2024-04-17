@@ -35,7 +35,8 @@ function ping(ws, interval) {
    setTimeout(ping, interval, ws, interval);
 }
 
-async function build(method, uri, payload) {
+const allowed_headers = ['content-type', 'user-agent', 'content-length'];
+async function build(method, uri, payload, m) {
    console.log('[D]', new Date().toISOString(), method, uri, payload);
    const parts = uri.split('/');
    parts.shift(); parts.shift(); // e.g. /pub/<region>/<site>/...
@@ -52,11 +53,19 @@ async function build(method, uri, payload) {
    }
    const url = `https://${site}.${baseUrl}/${remain}`;
 
+   const httpopt = {};
+   if (m.headers) {
+      httpopt.headers = Object.assign({}, m.headers);
+      Object.keys(httpopt.headers).forEach(x => {
+         if (!allowed_headers.includes(x)) delete httpopt.headers[x];
+      });
+   }
+
    if (method === 'POST') {
       payload = payload && Buffer.from(payload, 'base64');
-      return await i_download(url, { method, payload });
+      return await i_download(url, { ...httpopt, method, payload });
    } else {
-      return await i_download(url, { method });
+      return await i_download(url, { ...httpopt, method });
    }
 }
 
@@ -157,7 +166,7 @@ function connect() {
 
          if (!id || !method || !uri) return;
          try {
-            const obj = await build(method, uri, payload);
+            const obj = await build(method, uri, payload, data);
             if (!obj || obj.error) throw 'error';
             if (obj.redirect) throw 'not supported';
             const r = { id, headers: obj.headers, data: obj.buf.toString('base64') };

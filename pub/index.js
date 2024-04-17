@@ -198,14 +198,16 @@ const server = createServer({
             res.writeHead(400); res.end(); return;
          }
       }
+      const headers = Object.assign({}, req.headers);
       pubenv.task[id] = {
          ts: new Date().getTime(),
          id, res, data,
          method: req.method,
          uri: req.url,
+         opt: { headers, }
       };
       pubenv.taskc ++;
-      safeSendJson(pubenv.ws, { id, data, method: req.method, uri: req.url });
+      safeSendJson(pubenv.ws, { id, data, method: req.method, uri: req.url, headers });
    },
 });
 
@@ -328,5 +330,5 @@ i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
 });
 
 server.listen(i_env.server.port, i_env.server.host, () => {
-   console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port}`);
+   console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port} ...`);
 });

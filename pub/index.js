@@ -16,6 +16,7 @@ const i_env = {
       port: parseInt(process.env.TINY_PORT || '5001'),
       httpsCADir: process.env.TINY_HTTPS_CA_DIR?i_path.resolve(process.env.TINY_HTTPS_CA_DIR):null,
       maxWSn: parseInt(process.env.MAX_WS_N || '10'),
+      wsenable: !!process.env.PUB_WS,
    },
 };
 
@@ -290,6 +291,8 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
    onError: (err, ws, local) => {},
 });
 
+if (i_env.server.wsenable) {
+
 const http_max_id = 10000000;
 const ws_max_id = http_max_id + i_env.server.maxWSn + 1;
 i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
@@ -329,6 +332,9 @@ i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
    onError: (err, ws, local) => { },
 });
 
+} // if.wsenable
+
 server.listen(i_env.server.port, i_env.server.host, () => {
    console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port} ...`);
+   if (i_env.server.wsenable) console.log(`APITUNNEL-pub websocket enabled ...`);
 });

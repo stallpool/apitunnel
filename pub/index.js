@@ -19,6 +19,8 @@ const i_env = {
       wsenable: !!process.env.PUB_WS,
    },
 };
+const http_max_id = 10000000;
+const ws_max_id = http_max_id + i_env.server.maxWSn + 1;
 
 function basicRoute (req, res, router) {
    const r = i_url.parse(req.url);
@@ -189,7 +191,7 @@ const server = createServer({
       if (!pubenv.ws) {
          res.writeHead(502); res.end(); return;
       }
-      const id = (pubenv.id + 1) % 10000000;
+      const id = (pubenv.id + 1) % http_max_id;
       let data = null;
       pubenv.id = id;
       if (req.method == 'POST') {
@@ -286,6 +288,9 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
       }
    },
    onClose: (ws, local) => {
+      // XXX: disconnect all websocket channel; alternatively,
+      //      we keep a timeout threshold and after that close all
+      //      so that we can have some tolarence on network failure
       if (local.bind) pubenv.ws = null;
    },
    onError: (err, ws, local) => {},
@@ -293,8 +298,6 @@ i_makeWebsocket(server, 'sub', '/sub', (ws, local, m) => {
 
 if (i_env.server.wsenable) {
 
-const http_max_id = 10000000;
-const ws_max_id = http_max_id + i_env.server.maxWSn + 1;
 i_makeWebsocket(server, 'wspub', '/wspub', (ws, local, m) => {
    const task = pubenv.task[local.pubid];
    const data = {

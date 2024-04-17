@@ -61,7 +61,7 @@ async function build(method, uri, payload, m) {
       });
    }
 
-   if (method === 'POST') {
+   if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
       payload = payload && Buffer.from(payload, 'base64');
       return await i_download(url, { ...httpopt, method, payload });
    } else {
@@ -145,6 +145,9 @@ function connect() {
       });
       ws.on('close', () => {
          console.log('[I] disconnected');
+         // XXX: disconnect all websocket channel; alternatively,
+         //      we keep a timeout threshold and after that close all
+         //      so that we can have some tolarence on network failure
          env.ws = null;
       });
       ws.on('message', async (data) => {

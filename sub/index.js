@@ -1,5 +1,6 @@
 const i_ws = require('ws');
 const i_download = require('./request').download;
+const i_config = require('./config');
 
 const env = {
    maxWSn: parseInt(process.env.MAX_WS_N || '10'),
@@ -45,13 +46,8 @@ async function build(method, uri, payload, m) {
    if (parts.length === 0) return null;
    const remain = parts.join('/');
 
-   // region + site --> url, here just an example to map somename + site -> site.somename
-   let baseUrl;
-   switch (region) {
-   case 'somename': baseUrl = 'somesite'; break;
-   default: return null;
-   }
-   const url = `https://${site}.${baseUrl}/${remain}`;
+   const url = i_config.renderUrl('http', region, site, remain);
+   if (!url) throw `no such region "${region}"`;
 
    const httpopt = {};
    if (m.headers) {
@@ -104,13 +100,13 @@ async function buildWs(id, tunnel, m) {
       const region = parts[1];
       const site = parts[2];
       const remain = parts.slice(3).join('/');
-      let baseUrl;
+      const url = i_config.renderUrl('websocket', region, site, remain);
+      if (!url) return;
       let isBinary = false;
       switch (region) {
-      case 'somename': baseUrl = 'somesite'; break;
-      default: return null;
+      case 'dmzssh': isBinary = true; break;
+      default: isBinary = false;
       }
-      const url = `ws://${site}.${baseUrl}/${remain}`;
       const conn = new i_ws.WebSocket(url);
       const newobj = { id, conn, uri, bin: isBinary };
       // also set flag newobj.bin = true / false
@@ -189,4 +185,9 @@ function watchDog() {
    setTimeout(watchDog, 10*1000);
 }
 
-watchDog();
+function main() {
+   i_config.startWatchConfigFile();
+   watchDog();
+}
+
+main();

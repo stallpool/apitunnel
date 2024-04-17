@@ -86,23 +86,24 @@ async function buildWs(id, tunnel, m) {
    const obj = env.wsagent[id];
    if (act === 'close') {
       if (!obj) return;
-      console.log('[D]', new Date().toISOString(), 'websocket', 'close', uri);
+      console.log('[D]', new Date().toISOString(), 'websocket', 'close', obj.uri, id);
       safeClose(obj.conn);
    } else if (act === 'open' && uri) {
       if (obj) return;
-      console.log('[D]', new Date().toISOString(), 'websocket', 'open', uri);
+      console.log('[D]', new Date().toISOString(), 'websocket', 'open', uri, id);
       const parts = uri.split('/');
       const region = parts[1];
       const site = parts[2];
       const remain = parts.slice(3).join('/');
       let baseUrl;
+      let isBinary = false;
       switch (region) {
       case 'somename': baseUrl = 'somesite'; break;
       default: return null;
       }
       const url = `ws://${site}.${baseUrl}/${remain}`;
       const conn = new i_ws.WebSocket(url);
-      const newobj = { id, conn, uri };
+      const newobj = { id, conn, uri, bin: isBinary };
       // also set flag newobj.bin = true / false
       env.wsagent[id] = newobj;
       handleWsConnection(tunnel, newobj);

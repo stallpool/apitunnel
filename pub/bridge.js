@@ -1,5 +1,6 @@
 const i_crypto = require('crypto');
 const i_env = require('./env');
+const LoadBalance = require('./loadbalance').LoadBalance;
 
 function hash(text, salt) {
    return i_crypto.createHmac('sha512', salt || '').update(text).digest('hex');
@@ -97,14 +98,21 @@ class Bridge {
       this.taskgc = debounce(taskgc, 1000);
    }
 
+   registerSub(ws, local, m) {
+      local.bind = true;
+      local.authenticated = true;
+      const lb = this.ws[local.entry] || new LoadBalance();
+      lb.addConn(ws);
+      this.ws[local.entry] = lb;
+      const suffix = token ? ` with token` : ``;
+      console.log(`[I] "${local.entry}" (${lb.countConn()}) ${ws._meta_?.ip} connected${suffix}`);
+   }
+
    authenticate(ws, local, m) {
       if (!local.bind) {
          if (token) {
             if (m.cmd === 'auth' && token === hash(m.token, salt)) {
-               local.bind = true;
-               local.authenticated = true;
-               this.ws[local.entry] = ws;
-               console.log(`[I] "${local.entry}" ${ws._meta_?.ip} connected with token`);
+               this.registerSub(ws, local, m);
                return true;
             } else {
                safeClose(ws);
@@ -132,22 +140,22 @@ class Bridge {
       return {
          onOpen: ((ws, local) => {
             const entry = ws._meta_.url.substring(1);
-            if (this.ws[entry] || !entries.includes(entry)) { safeClose(ws); return; }
-            if (!token) {
-               local.bind = true;
-               local.authenticated = true;
-               this.ws[entry] = ws;
-               console.log(`[I] "${entry}" ${ws._meta_?.ip} connected`);
-            }
+            const lb = this.ws[entry];
+            if ((lb && !lb.hasEmptySlot()) || !entries.includes(entry)) { safeClose(ws); return; }
             local.entry = entry;
+            if (!token) {
+               this.registerSub(ws, local, {});
+            }
          }).bind(this),
          onClose: ((ws, local) => {
             // XXX: disconnect all websocket channel; alternatively,
             //      we keep a timeout threshold and after that close all
             //      so that we can have some tolarence on network failure
             if (local.bind) {
-               this.ws[local.entry] = null;
-               console.log(`[I] "${local.entry}" ${ws._meta_?.ip} disconnected`);
+               const lb = this.ws[local.entry];
+               lb.delConn(ws);
+               if (!lb.hasConn()) this.ws[local.entry] = null;
+               console.log(`[I] "${local.entry}" (${lb.countConn()}) ${ws._meta_?.ip} disconnected`);
             }
          }).bind(this),
          onError: ((err, ws, local) => {}).bind(this),
@@ -156,12 +164,11 @@ class Bridge {
 
    bridgeHttpReq(entry) {
       return (async (req, res, opt) => {
-         const dst = this.ws[entry];
-         if (!dst) {
-            res.writeHead(502); res.end();
-            return;
-         }
+         const lb = this.ws[entry];
+         if (!lb) { res.writeHead(502); res.end(); return; }
          const id = (this.hid + 1) % http_max_id;
+         const dst = lb && lb.getOne(id);
+         if (!dst) { res.writeHead(502); res.end(); return; }
          this.hid = id;
          let data = null;
          if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
@@ -215,11 +222,13 @@ class Bridge {
       return {
          raw: true,
          onOpen: ((ws, local) => {
-            const dst = this.ws[entry];
-            if (!dst) { safeClose(ws); return; }
+            const lb = this.ws[entry];
+            if (!lb) { safeClose(ws); return; }
             let id;
             for (id = http_max_id+1; id < ws_max_id && this.task[id]; id++);
             if (id === ws_max_id) { safeClose(ws); return; } // reach max rate limit
+            const dst = lb.getOne(id);
+            if (!dst) { safeClose(ws); return; }
             local.pubid = id;
             const task = {
                ts: new Date().getTime(),
@@ -237,7 +246,8 @@ class Bridge {
             if (!id) return;
             const task = this.task[id];
             delete this.task[id];
-            const dst = this.ws[entry];
+            const lb = this.ws[entry];
+            const dst = lb && lb.getOne(id);
             if (dst) safeSendJson(dst, { id, mode: 'ws', act: 'close' });
          }).bind(this),
          onError: ((err, ws, local) => { }).bind(this),
@@ -246,7 +256,8 @@ class Bridge {
 
    bridgeWsReq(entry) {
       return (async (ws, local, m) => {
-         const dst = this.ws[entry];
+         const lb = this.ws[entry];
+         const dst = lb && lb.getOne(local.pubid);
          if (!dst) { safeClose(ws); return; }
          const task = this.task[local.pubid];
          if (!task) { safeClose(ws); return; }

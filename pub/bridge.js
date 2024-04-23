@@ -211,11 +211,11 @@ class Bridge {
       this.taskgc(this);
    }
 
-   buildWsOptions() {
+   buildWsOptions(entry) {
       return {
          raw: true,
          onOpen: ((ws, local) => {
-            const dst = this.ws[local.entry];
+            const dst = this.ws[entry];
             if (!dst) { safeClose(ws); return; }
             let id;
             for (id = http_max_id+1; id < ws_max_id && this.task[id]; id++);
@@ -235,10 +235,10 @@ class Bridge {
          onClose: ((ws, local) => {
             const id = local.pubid;
             if (!id) return;
-            const dst = this.ws[local.entry];
             const task = this.task[id];
             delete this.task[id];
-            safeSendJson(dst, { id, mode: 'ws', act: 'close' });
+            const dst = this.ws[entry];
+            if (dst) safeSendJson(dst, { id, mode: 'ws', act: 'close' });
          }).bind(this),
          onError: ((err, ws, local) => { }).bind(this),
       };

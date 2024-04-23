@@ -97,7 +97,7 @@ function main() {
 
    if (i_env.pub.ws_enable) {
       i_env.pub.multiple_entries.forEach(entry => {
-         i_makeWebsocket(server, `ws${entry}`, `/ws${entry}`, bridge.bridgeWsReq(entry), bridge.buildWsOptions());
+         i_makeWebsocket(server, `ws${entry}`, `/ws${entry}`, bridge.bridgeWsReq(entry), bridge.buildWsOptions(entry));
       });
    } // if.ws_enable
 

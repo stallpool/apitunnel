@@ -86,7 +86,7 @@ function taskgc(bridge) {
 const http_max_id = 10000000;
 const ws_max_id = http_max_id + i_env.pub.ws_client_max + 1;
 const salt = i_env.pub.salt;
-const token = i_env.pub.token ? hash(i_env.pub.token, i_env.salt) : null;
+const token = i_env.pub.token ? hash(i_env.pub.token, i_env.pub.salt) : null;
 
 class Bridge {
    constructor() {
@@ -103,8 +103,8 @@ class Bridge {
             if (m.cmd === 'auth' && token === hash(m.token, salt)) {
                local.bind = true;
                local.authenticated = true;
-               this.ws[loca.entry] = ws;
-               console.log(`[I] ${local.entry} ${ws._meta_?.ip} connected with token`);
+               this.ws[local.entry] = ws;
+               console.log(`[I] "${local.entry}" ${ws._meta_?.ip} connected with token`);
                return true;
             } else {
                safeClose(ws);

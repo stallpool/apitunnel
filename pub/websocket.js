@@ -13,7 +13,7 @@ function delWsPathHandler(path) {
 function handleConnection(ws, req, path, cfg) {
    const config = env.pathConfig[path];
    if (!path || !cfg) {
-      try { ws.terminate(); } catch (err) { }
+      try { ws.terminate(); } catch (_) { }
       return;
    }
    const onOpen = cfg.opt.onOpen;
@@ -21,14 +21,18 @@ function handleConnection(ws, req, path, cfg) {
    const onError = cfg.opt.onError;
    const timeout = cfg.opt.timeout;
    const local = { ws };
+   let timer = 0;
    onOpen && onOpen(ws, local);
-   if (timeout > 0) setTimeout(() => (!local.authenticated) && ws.terminate(), timeout);
+   if (timeout > 0) timer = setTimeout(() => {
+      if (local.authenticated) return;
+      try { ws.terminate(); } catch(_) { }
+   }, timeout);
    ws.on('close', () => {
       local.closed = true;
+      if (timer) clearTimeout(timer);
       onClose && onClose(ws, local);
    });
    ws.on('error', (err) => {
-      local.closed = true;
       onError && onError(err, ws, local);
    });
    ws.on('message', (m) => {

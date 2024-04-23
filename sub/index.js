@@ -1,11 +1,12 @@
 const i_ws = require('ws');
 const i_download = require('./request').download;
 const i_config = require('./config');
+const i_env = require('./env');
 
 const env = {
-   maxWSn: parseInt(process.env.MAX_WS_N || '10'),
-   target: process.env.PUB_URL,
-   token: process.env.PUB_TOKEN,
+   maxWSn: i_env.sub.ws_client_max,
+   target: i_env.sub.pub_url,
+   token: i_env.sub.pub_token,
    ws: null,
    connN: 0,
    ticket: {},

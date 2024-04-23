@@ -1,4 +1,5 @@
 const i_fs = require('fs');
+const i_env = require('./env');
 
 /*
    example config.json
@@ -17,7 +18,7 @@ const i_fs = require('fs');
 */
 
 const env = {
-   subconfig: process.env.SUB_CONFIG,
+   subconfig: i_env.sub.config_path,
 };
 
 const config = {

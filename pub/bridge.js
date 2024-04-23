@@ -1,6 +1,6 @@
 const i_crypto = require('crypto');
 const i_env = require('./env');
-const LoadBalance = require('./loadbalance').LoadBalance;
+const i_lb = require('./loadbalance');
 
 function hash(text, salt) {
    return i_crypto.createHmac('sha512', salt || '').update(text).digest('hex');
@@ -84,7 +84,7 @@ function taskgc(bridge) {
    });
 }
 
-const http_max_id = 10000000;
+const http_max_id = i_env.pub.http_client_max;
 const ws_max_id = http_max_id + i_env.pub.ws_client_max + 1;
 const salt = i_env.pub.salt;
 const token = i_env.pub.token ? hash(i_env.pub.token, i_env.pub.salt) : null;
@@ -98,10 +98,26 @@ class Bridge {
       this.taskgc = debounce(taskgc, 1000);
    }
 
+   buildLoadBalance(m) {
+      let lb = null;
+      if (m) {
+         if (m.lb === 'roundrobin') {
+            lb = new i_lb.RoundRobinLoadBalance();
+         } else if (m.lb === 'idbind') {
+            lb = new i_lb.IdBindLoadBalance();
+         }
+         if (lb && m.lb_n) lb.setSlotN(isNaN(m.lb_n) ? 1 : m.lb_n);
+      }
+      if (!lb) lb = new i_lb.NoLoadBalance();
+      lb.idbindlb = new i_lb.IdBindLoadBalance(lb.conn);
+      return lb;
+   }
+
    registerSub(ws, local, m) {
       local.bind = true;
       local.authenticated = true;
-      const lb = this.ws[local.entry] || new LoadBalance();
+      // let the first connected sub to decide the load balancer type
+      const lb = this.ws[local.entry] || this.buildLoadBalance(m);
       lb.addConn(ws);
       this.ws[local.entry] = lb;
       const suffix = token ? ` with token` : ``;
@@ -169,6 +185,7 @@ class Bridge {
          const id = (this.hid + 1) % http_max_id;
          const dst = lb && lb.getOne(id);
          if (!dst) { res.writeHead(502); res.end(); return; }
+         lb.cancelOne(id);
          this.hid = id;
          let data = null;
          if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
@@ -222,7 +239,7 @@ class Bridge {
       return {
          raw: true,
          onOpen: ((ws, local) => {
-            const lb = this.ws[entry];
+            const lb = this.ws[entry]?.idbindlb;
             if (!lb) { safeClose(ws); return; }
             let id;
             for (id = http_max_id+1; id < ws_max_id && this.task[id]; id++);
@@ -246,9 +263,12 @@ class Bridge {
             if (!id) return;
             const task = this.task[id];
             delete this.task[id];
-            const lb = this.ws[entry];
-            const dst = lb && lb.getOne(id);
-            if (dst) safeSendJson(dst, { id, mode: 'ws', act: 'close' });
+            const lb = this.ws[entry]?.idbindlb;
+            if (lb) {
+               const dst = lb.getOne(id);
+               lb.cancelOne(id);
+               if (dst) safeSendJson(dst, { id, mode: 'ws', act: 'close' });
+            }
          }).bind(this),
          onError: ((err, ws, local) => { }).bind(this),
       };
@@ -256,7 +276,7 @@ class Bridge {
 
    bridgeWsReq(entry) {
       return (async (ws, local, m) => {
-         const lb = this.ws[entry];
+         const lb = this.ws[entry]?.idbindlb;
          const dst = lb && lb.getOne(local.pubid);
          if (!dst) { safeClose(ws); return; }
          const task = this.task[local.pubid];

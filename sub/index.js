@@ -147,7 +147,15 @@ function connect() {
       const ws = new i_ws.WebSocket(env.target);
       env.ws = ws;
       ws.on('open', () => {
-         if (env.token) safeSendJson(ws, { cmd: 'auth', token: env.token });
+         if (env.token) {
+            const obj = { cmd: 'auth', token: env.token };
+            if (i_env.sub.lb) {
+               obj.lb = i_env.sub.lb;
+               obj.lb_n = i_env.sub.lb_n;
+               console.log(`[I] ${new Date().toISOString()} loadbalancer: ${obj.lb} (${obj.lb_n || 1})`);
+            }
+            safeSendJson(ws, obj);
+         }
          console.log(`[I] ${new Date().toISOString()} connected.`);
       });
       ws.on('error', (err) => {

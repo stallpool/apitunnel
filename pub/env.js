@@ -8,6 +8,7 @@ module.exports = {
    pub: {
       ws_enable: !!process.env.PUB_WS,
       ws_client_max: parseInt(process.env.MAX_WS_N || '10'),
+      http_client_max: 10000000,
       salt: process.env.PUB_SALT,
       token: process.env.PUB_TOKEN,
       multiple_entries: process.env.PUB_API ? process.env.PUB_API.split(',') : ['pub'],

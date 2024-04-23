@@ -26,6 +26,10 @@ const config = {
    data: {},
 };
 
+function getRawConfig() {
+   return config.data;
+}
+
 function renderUrl(mode, region, site, remain) {
    const obj = config.data?.tunnel?.[mode]?.[region];
    if (!obj || !obj.url) return null;
@@ -72,5 +76,6 @@ function startWatchConfigFile() {
 module.exports = {
    startWatchConfigFile,
    readConfig,
+   getRawConfig,
    renderUrl,
 };

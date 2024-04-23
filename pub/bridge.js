@@ -101,6 +101,7 @@ class Bridge {
          if (token) {
             if (m.cmd === 'auth' && token === hash(m.token, salt)) {
                local.bind = true;
+               local.authenticated = true;
                this.ws = ws;
                console.log(`[I] ${ws._meta_?.ip} connected with token`);
                return true;
@@ -132,6 +133,7 @@ class Bridge {
             if (this.ws) { safeClose(ws); return; }
             if (!token) {
                local.bind = true;
+               local.authenticated = true;
                this.ws = ws;
                console.log(`[I] ${ws._meta_?.ip} connected`);
             }

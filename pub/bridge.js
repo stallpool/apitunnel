@@ -56,7 +56,7 @@ function safeSendJson(ws, json) {
    safeSend(ws, JSON.stringify(json));
 }
 
-function bounce(fn, timeout) {
+function debounce(fn, timeout) {
    let busy = false, timer = 0;
    return (...args) => {
       if (busy) return;
@@ -93,7 +93,7 @@ class Bridge {
       this.hid = 0;
       this.task = {};
       this.taskc = 0;
-      this.taskgc = bounce(taskgc, 1000);
+      this.taskgc = debounce(taskgc, 1000);
    }
 
    authenticate(ws, local, m) {

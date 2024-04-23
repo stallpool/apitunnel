@@ -37,7 +37,7 @@ function ping(ws, interval) {
 }
 
 const allowed_headers = ['content-type', 'user-agent', 'content-length'];
-async function build(method, uri, payload, m) {
+async function processHttp(method, uri, payload, m) {
    console.log('[D]', new Date().toISOString(), method, uri, payload);
    const parts = uri.split('/');
    parts.shift(); parts.shift(); // e.g. /pub/<region>/<site>/...
@@ -64,8 +64,23 @@ async function build(method, uri, payload, m) {
       return await i_download(url, { ...httpopt, method });
    }
 }
+async function handleHttp(id, tunnel, m) {
+   const method = m.method;
+   const uri = m.uri;
+   const payload = m.data;
+   if (!id || !method || !uri) return;
+   try {
+      const obj = await processHttp(method, uri, payload, m);
+      if (!obj || obj.error) throw 'error';
+      if (obj.redirect) throw 'not supported';
+      const r = { id, headers: obj.headers, data: obj.buf.toString('base64') };
+      safeSendJson(tunnel, r);
+   } catch (err) {
+      safeSendJson(tunnel, { id, code: 500 });
+   }
+}
 
-function handleWsConnection(subws, obj) {
+function processWs(subws, obj) {
    const id = obj.id;
    obj.conn.on('open', () => {
       safeSendJson(subws, { id, mode: 'ws', act: 'open', bin: obj.bin});
@@ -82,8 +97,7 @@ function handleWsConnection(subws, obj) {
    });
    obj.conn.on('error', (err) => {});
 }
-
-async function buildWs(id, tunnel, m) {
+async function handleWs(id, tunnel, m) {
    const act = m.act;
    const uri = m.uri;
    const dat = m.data;
@@ -111,7 +125,7 @@ async function buildWs(id, tunnel, m) {
       const newobj = { id, conn, uri, bin: isBinary };
       // also set flag newobj.bin = true / false
       env.wsagent[id] = newobj;
-      handleWsConnection(tunnel, newobj);
+      processWs(tunnel, newobj);
    } else if (dat) {
       if (!obj) return;
       try {
@@ -151,28 +165,16 @@ function connect() {
             return;
          }
          try { data = JSON.parse(data); } catch (err) { data = {}; }
-         const mode = data.mode;
          const id = data.id;
-         const method = data.method;
-         const uri = data.uri;
-         const payload = data.data;
+         const mode = data.mode;
 
          if (mode === 'ws') {
             if (!id) return;
-            buildWs(id, ws, data);
+            handleWs(id, ws, data);
             return;
          }
 
-         if (!id || !method || !uri) return;
-         try {
-            const obj = await build(method, uri, payload, data);
-            if (!obj || obj.error) throw 'error';
-            if (obj.redirect) throw 'not supported';
-            const r = { id, headers: obj.headers, data: obj.buf.toString('base64') };
-            safeSendJson(ws, r);
-         } catch (err) {
-            safeSendJson(ws, { id, code: 500 });
-         }
+         handleHttp(id, ws, data);
       });
       setTimeout(() => ping(env.ws, 30*1000), 30*1000);
    } catch (err) { }

@@ -66,7 +66,7 @@ function addWsPathHandler(server, path, fn, opt) {
          if (rpath && rpath.charAt(0) !== '/') continue;
          env.wss.handleUpgrade(req, socket, head, (ws) => {
             ws._meta_ = {
-               ip: `${req.connection.remoteAddress || req.headers['x-forwarded-for']}`,
+               ip: `${req.headers['x-forwarded-for'] || req.connection.remoteAddress}`,
                url: rpath || '/',
             };
             env.wss.emit('connection', ws, req, rpath || '/', config);

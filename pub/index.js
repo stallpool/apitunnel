@@ -3,16 +3,7 @@
 const i_fs = require('fs');
 const i_path = require('path');
 const i_url = require('url');
-
-const i_env = {
-   debug: !!process.env.TINY_DEBUG,
-   server: {
-      host: process.env.TINY_HOST || '127.0.0.1',
-      port: parseInt(process.env.TINY_PORT || '5001'),
-      httpsCADir: process.env.TINY_HTTPS_CA_DIR?i_path.resolve(process.env.TINY_HTTPS_CA_DIR):null,
-      wsenable: !!process.env.PUB_WS,
-   },
-};
+const i_env = require('./env');
 
 function basicRoute (req, res, router) {
    const r = i_url.parse(req.url);
@@ -102,11 +93,11 @@ const server = createServer({
 
 i_makeWebsocket(server, 'sub', '/sub', bridge.listenSub(), bridge.buildSubOptions());
 
-if (i_env.server.wsenable) {
+if (i_env.pub.ws_enable) {
    i_makeWebsocket(server, 'wspub', '/wspub', bridge.bridgeWsReq(), bridge.buildWsOptions());
-} // if.wsenable
+} // if.ws_enable
 
 server.listen(i_env.server.port, i_env.server.host, () => {
    console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port} ...`);
-   if (i_env.server.wsenable) console.log(`APITUNNEL-pub websocket enabled ...`);
+   if (i_env.pub.ws_enable) console.log(`APITUNNEL-pub websocket enabled ...`);
 });

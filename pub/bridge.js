@@ -1,4 +1,5 @@
 const i_crypto = require('crypto');
+const i_env = require('./env');
 
 function hash(text, salt) {
    return i_crypto.createHmac('sha512', salt || '').update(text).digest('hex');
@@ -83,9 +84,9 @@ function taskgc(bridge) {
 }
 
 const http_max_id = 10000000;
-const ws_max_id = http_max_id + parseInt(process.env.MAX_WS_N || '10') + 1;
-const salt = process.env.PUB_SALT;
-const token = process.env.PUB_TOKEN ? hash(process.env.PUB_TOKEN, process.env.PUB_SALT) : null;
+const ws_max_id = http_max_id + i_env.pub.ws_client_max + 1;
+const salt = i_env.pub.salt;
+const token = i_env.pub.token ? hash(i_env.pub.token, i_env.salt) : null;
 
 class Bridge {
    constructor() {

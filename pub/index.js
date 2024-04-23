@@ -81,23 +81,30 @@ function createServer(router) {
    return server;
 }
 
-const Bridge = require('./bridge').Bridge;
-const bridge = new Bridge();
+function main() {
+   const Bridge = require('./bridge').Bridge;
+   const bridge = new Bridge();
 
-const i_makeWebsocket = require('./websocket').makeWebsocket;
+   const i_makeWebsocket = require('./websocket').makeWebsocket;
 
-const server = createServer({
-   ping: (req, res, opt) => res.end('pong'),
-   pub: bridge.bridgeHttpReq(),
-});
+   const api_router = { ping: (req, res, opt) => res.end('pong'), };
+   i_env.pub.multiple_entries.forEach(entry => {
+      api_router[entry] = bridge.bridgeHttpReq(entry);
+   });
+   const server = createServer(api_router);
 
-i_makeWebsocket(server, 'sub', '/sub', bridge.listenSub(), bridge.buildSubOptions());
+   i_makeWebsocket(server, 'sub', '/sub', bridge.listenSub(), bridge.buildSubOptions(i_env.pub.multiple_entries));
 
-if (i_env.pub.ws_enable) {
-   i_makeWebsocket(server, 'wspub', '/wspub', bridge.bridgeWsReq(), bridge.buildWsOptions());
-} // if.ws_enable
+   if (i_env.pub.ws_enable) {
+      i_env.pub.multiple_entries.forEach(entry => {
+         i_makeWebsocket(server, `ws${entry}`, `/ws${entry}`, bridge.bridgeWsReq(entry), bridge.buildWsOptions());
+      });
+   } // if.ws_enable
 
-server.listen(i_env.server.port, i_env.server.host, () => {
-   console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port} ...`);
-   if (i_env.pub.ws_enable) console.log(`APITUNNEL-pub websocket enabled ...`);
-});
+   server.listen(i_env.server.port, i_env.server.host, () => {
+      console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port} ...`);
+      if (i_env.pub.ws_enable) console.log(`APITUNNEL-pub websocket enabled ...`);
+   });
+}
+
+main();

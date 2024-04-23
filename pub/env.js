@@ -10,5 +10,6 @@ module.exports = {
       ws_client_max: parseInt(process.env.MAX_WS_N || '10'),
       salt: process.env.PUB_SALT,
       token: process.env.PUB_TOKEN,
+      multiple_entries: process.env.PUB_API ? process.env.PUB_API.split(',') : ['pub'],
    },
 };

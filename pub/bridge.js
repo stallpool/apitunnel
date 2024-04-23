@@ -90,7 +90,7 @@ const token = i_env.pub.token ? hash(i_env.pub.token, i_env.salt) : null;
 
 class Bridge {
    constructor() {
-      this.ws = null;
+      this.ws = {};
       this.hid = 0;
       this.task = {};
       this.taskc = 0;
@@ -103,8 +103,8 @@ class Bridge {
             if (m.cmd === 'auth' && token === hash(m.token, salt)) {
                local.bind = true;
                local.authenticated = true;
-               this.ws = ws;
-               console.log(`[I] ${ws._meta_?.ip} connected with token`);
+               this.ws[loca.entry] = ws;
+               console.log(`[I] ${local.entry} ${ws._meta_?.ip} connected with token`);
                return true;
             } else {
                safeClose(ws);
@@ -128,30 +128,36 @@ class Bridge {
       }).bind(this);
    }
 
-   buildSubOptions() {
+   buildSubOptions(entries) {
       return {
          onOpen: ((ws, local) => {
-            if (this.ws) { safeClose(ws); return; }
+            const entry = ws._meta_.url.substring(1);
+            if (this.ws[entry] || !entries.includes(entry)) { safeClose(ws); return; }
             if (!token) {
                local.bind = true;
                local.authenticated = true;
-               this.ws = ws;
-               console.log(`[I] ${ws._meta_?.ip} connected`);
+               this.ws[entry] = ws;
+               console.log(`[I] "${entry}" ${ws._meta_?.ip} connected`);
             }
+            local.entry = entry;
          }).bind(this),
          onClose: ((ws, local) => {
             // XXX: disconnect all websocket channel; alternatively,
             //      we keep a timeout threshold and after that close all
             //      so that we can have some tolarence on network failure
-            if (local.bind) this.ws = null;
+            if (local.bind) {
+               this.ws[local.entry] = null;
+               console.log(`[I] "${local.entry}" ${ws._meta_?.ip} disconnected`);
+            }
          }).bind(this),
          onError: ((err, ws, local) => {}).bind(this),
       };
    }
 
-   bridgeHttpReq() {
+   bridgeHttpReq(entry) {
       return (async (req, res, opt) => {
-         if (!this.ws) {
+         const dst = this.ws[entry];
+         if (!dst) {
             res.writeHead(502); res.end();
             return;
          }
@@ -174,7 +180,7 @@ class Bridge {
             opt: { headers, }
          };
          this.taskc ++;
-         safeSendJson(this.ws, { id, data, method: req.method, uri: req.url, headers });
+         safeSendJson(dst, { id, data, method: req.method, uri: req.url, headers });
       }).bind(this);
    }
 
@@ -209,7 +215,8 @@ class Bridge {
       return {
          raw: true,
          onOpen: ((ws, local) => {
-            if (!this.ws) { safeClose(ws); return; }
+            const dst = this.ws[local.entry];
+            if (!dst) { safeClose(ws); return; }
             let id;
             for (id = http_max_id+1; id < ws_max_id && this.task[id]; id++);
             if (id === ws_max_id) { safeClose(ws); return; } // reach max rate limit
@@ -223,21 +230,24 @@ class Bridge {
                task.e = e;
             });
             this.task[id] = task;
-            safeSendJson(this.ws, { id, mode: 'ws', act: 'open', uri: ws._meta_.url })
+            safeSendJson(dst, { id, mode: 'ws', act: 'open', uri: ws._meta_.url })
          }).bind(this),
          onClose: ((ws, local) => {
             const id = local.pubid;
             if (!id) return;
+            const dst = this.ws[local.entry];
             const task = this.task[id];
             delete this.task[id];
-            safeSendJson(this.ws, { id, mode: 'ws', act: 'close' });
+            safeSendJson(dst, { id, mode: 'ws', act: 'close' });
          }).bind(this),
          onError: ((err, ws, local) => { }).bind(this),
       };
    }
 
-   bridgeWsReq() {
+   bridgeWsReq(entry) {
       return (async (ws, local, m) => {
+         const dst = this.ws[entry];
+         if (!dst) { safeClose(ws); return; }
          const task = this.task[local.pubid];
          if (!task) { safeClose(ws); return; }
          const data = {
@@ -246,7 +256,7 @@ class Bridge {
             data: m.toString('base64'),
          };
          await task.init;
-         safeSendJson(this.ws, data);
+         safeSendJson(dst, data);
       }).bind(this);
    }
 

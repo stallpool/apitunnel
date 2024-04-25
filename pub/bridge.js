@@ -182,16 +182,23 @@ class Bridge {
       return (async (req, res, opt) => {
          const lb = this.ws[entry];
          if (!lb) { res.writeHead(502); res.end(); return; }
+
+         if (this.taskc >= i_config.pub.ratelimit) {
+            res.writeHead(429); res.end(); return;
+         }
+
          const id = (this.hid + 1) % http_max_id;
          const dst = lb && lb.getOne(id);
          if (!dst) { res.writeHead(502); res.end(); return; }
          lb.cancelOne(id);
          this.hid = id;
          let data = null;
+         this.taskc ++;
          if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
             try {
                data = (await readRequest(req, 10240 /*10K*/)).toString('base64');
             } catch(err) {
+               this.taskc --;
                res.writeHead(400); res.end(); return;
             }
          }
@@ -203,7 +210,6 @@ class Bridge {
             uri: req.url,
             opt: { headers, }
          };
-         this.taskc ++;
          safeSendJson(dst, { id, data, method: req.method, uri: req.url, headers });
       }).bind(this);
    }

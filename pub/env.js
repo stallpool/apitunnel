@@ -12,6 +12,6 @@ module.exports = {
       salt: process.env.PUB_SALT,
       token: process.env.PUB_TOKEN,
       multiple_entries: process.env.PUB_API ? process.env.PUB_API.split(',') : ['pub'],
-      ratelimit: process.env.PUB_RATELIMIT ? parseInt(process.env.PUB_RATELIMIT) : Infinity;
+      ratelimit: process.env.PUB_RATELIMIT ? parseInt(process.env.PUB_RATELIMIT) : Infinity,
    },
 };

@@ -183,7 +183,7 @@ class Bridge {
          const lb = this.ws[entry];
          if (!lb) { res.writeHead(502); res.end(); return; }
 
-         if (this.taskc >= i_config.pub.ratelimit) {
+         if (this.taskc >= i_env.pub.ratelimit) {
             res.writeHead(429); res.end(); return;
          }
 

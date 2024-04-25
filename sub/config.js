@@ -51,6 +51,12 @@ function renderUrl(mode, region, site, remain) {
    }).join('');
 }
 
+function isBinary(mode, region, site, remain) {
+   const obj = config.data?.tunnel?.[mode]?.[region];
+   if (!obj || !obj.url) return false;
+   return !!obj.bin;
+}
+
 function readConfig(filename) {
    i_fs.stat(filename, (err, stat) => {
       if (err) return;
@@ -78,4 +84,5 @@ module.exports = {
    readConfig,
    getRawConfig,
    renderUrl,
+   isBinary,
 };

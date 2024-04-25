@@ -117,11 +117,7 @@ async function handleWs(id, tunnel, m) {
       const remain = parts.slice(3).join('/');
       const url = i_config.renderUrl('websocket', region, site, remain);
       if (!url) return;
-      let isBinary = false;
-      switch (region) {
-      case 'dmzssh': isBinary = true; break;
-      default: isBinary = false;
-      }
+      const isBinary = i_config.isBinary('websocket', region, site, remain);
       const conn = new i_ws.WebSocket(url);
       const newobj = { id, conn, uri, bin: isBinary };
       // also set flag newobj.bin = true / false

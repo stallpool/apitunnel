@@ -1,12 +1,13 @@
-// version 1.0.1
+// version 2.0.0 - HTTP2 upgrade
 
 const i_fs = require('fs');
 const i_path = require('path');
 const i_url = require('url');
+const i_http2 = require('http2');
 const i_env = require('./env');
 
-function basicRoute (req, res, router) {
-   const r = i_url.parse(req.url);
+function basicRoute(stream, headers, router) {
+   const r = i_url.parse(headers[':path']);
    const originPath = r.pathname.split('/');
    const path = originPath.slice();
    const query = {};
@@ -33,7 +34,7 @@ function basicRoute (req, res, router) {
    });
    path.shift();
    if (typeof(f) === 'function') {
-      return f(req, res, {
+      return f(stream, headers, {
          path: path,
          query: query
       });
@@ -43,67 +44,101 @@ function basicRoute (req, res, router) {
       f = f[key];
       if (!f) break;
       if (typeof(f) === 'function') {
-         return f(req, res, {
+         return f(stream, headers, {
             path: path,
             query: query
          });
       }
    }
-   return serveCode(req, res, 404, 'Not Found');
+   return serveCode(stream, 404, 'Not Found');
 }
 
-function serveCode(req, res, code, text) {
-   res.writeHead(code || 500, text || '');
-   res.end();
+function serveCode(stream, code, text) {
+   stream.respond({ ':status': code || 500 });
+   stream.end(text || '');
 }
 
-function createServer(router) {
-   let server = null;
+function createHttp2Server(router) {
    if (typeof(router) !== 'function') {
      router = Object.assign({}, router);
    }
-   if (i_env.server.httpsCADir) {
-      const i_https = require('https');
-      const https_config = {
-         // openssl req -newkey rsa:2048 -new -nodes -x509 -days 365 -keyout ca.key -out ca.crt
-         key: i_fs.readFileSync(i_path.join(i_env.server.httpsCADir, 'ca.key')),
-         cert: i_fs.readFileSync(i_path.join(i_env.server.httpsCADir, 'ca.crt')),
-      };
-      server = i_https.createServer(https_config, (req, res) => {
-         basicRoute(req, res, router);
-      });
-   } else {
-      const i_http = require('http');
-      server = i_http.createServer((req, res) => {
-         basicRoute(req, res, router);
-      });
-   }
+
+   const serverOptions = {
+      key: i_fs.readFileSync(i_path.join(i_env.server.http2CertDir, 'server.key')),
+      cert: i_fs.readFileSync(i_path.join(i_env.server.http2CertDir, 'server.crt')),
+      // Enable Extended CONNECT for WebSocket over HTTP/2 (RFC 8441)
+      enableConnectProtocol: true,
+   };
+
+   const server = i_http2.createSecureServer(serverOptions);
+
+   server.on('stream', (stream, headers) => {
+      // Handle Extended CONNECT for WebSocket (RFC 8441)
+      if (headers[':method'] === 'CONNECT' && headers[':protocol'] === 'websocket') {
+         handleWebSocketConnect(stream, headers, router);
+      } else {
+         basicRoute(stream, headers, router);
+      }
+   });
+
    return server;
+}
+
+function handleWebSocketConnect(stream, headers, router) {
+   console.log('[D] WebSocket Extended CONNECT request:', headers[':path']);
+
+   // Extract the path and find the appropriate handler
+   const path = headers[':path'] || '/';
+   const pathParts = path.split('/');
+
+   // Look for websocket handlers (e.g., /wspub/...)
+   if (pathParts[1] && pathParts[1].startsWith('ws')) {
+      const entry = pathParts[1].substring(2); // Remove 'ws' prefix
+      const bridge = router._bridge;
+
+      if (bridge && bridge.handleWebSocketConnect) {
+         bridge.handleWebSocketConnect(stream, headers, entry, path);
+      } else {
+         stream.respond({ ':status': 404 });
+         stream.end();
+      }
+   } else {
+      stream.respond({ ':status': 404 });
+      stream.end();
+   }
 }
 
 function main() {
    const Bridge = require('./bridge').Bridge;
    const bridge = new Bridge();
 
-   const i_makeWebsocket = require('./websocket').makeWebsocket;
+   const api_router = {
+      ping: (stream, headers, opt) => {
+         stream.respond({ ':status': 200 });
+         stream.end('pong');
+      },
+      // Test endpoint for server-to-client messaging
+      broadcast: bridge.handleTestMessage(),
+      // Store bridge reference for WebSocket handling
+      _bridge: bridge,
+   };
 
-   const api_router = { ping: (req, res, opt) => res.end('pong'), };
+   // Add HTTP endpoints for each entry
    i_env.pub.multiple_entries.forEach(entry => {
       api_router[entry] = bridge.bridgeHttpReq(entry);
    });
-   const server = createServer(api_router);
 
-   i_makeWebsocket(server, 'sub', '/sub', bridge.listenSub(), bridge.buildSubOptions(i_env.pub.multiple_entries));
+   // Add bidirectional stream endpoint
+   api_router['stream'] = bridge.handleBidirectionalStream();
 
-   if (i_env.pub.ws_enable) {
-      i_env.pub.multiple_entries.forEach(entry => {
-         i_makeWebsocket(server, `ws${entry}`, `/ws${entry}`, bridge.bridgeWsReq(entry), bridge.buildWsOptions(entry));
-      });
-   } // if.ws_enable
+   // Add sub registration endpoint for HTTP2
+   api_router['sub'] = bridge.handleSubConnection();
+
+   const server = createHttp2Server(api_router);
 
    server.listen(i_env.server.port, i_env.server.host, () => {
-      console.log(`APITUNNEL-pub is listening at ${i_env.server.host}:${i_env.server.port} ...`);
-      if (i_env.pub.ws_enable) console.log(`APITUNNEL-pub websocket enabled ...`);
+      console.log(`APITUNNEL-pub HTTP2 is listening at ${i_env.server.host}:${i_env.server.port} ...`);
+      console.log(`APITUNNEL-pub WebSocket over HTTP2 (RFC 8441) enabled ...`);
    });
 }
 

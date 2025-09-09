@@ -1,4 +1,8 @@
-# apitunnel
+# apitunnel (HTTP2)
+
+### HTTP2 Upgrade
+
+This version has been upgraded from WebSocket to HTTP2 for better performance and security.
 
 ### How to use
 
@@ -21,18 +25,22 @@
 
 - run pub: `node pub/index.js`
   - `PUB_TOKEN` + `PUB_SALT` can enable token auth for authenticating sub instances
-  - `PUB_WS=1` can enable websocket support
-  - `PUB_API=name1,name2,...` can register different api entries; by default there is only entry of "pub"; for example, "pub" will have restful entry at "/pub" and websocket entry at "/wspub"
+  - `PUB_API=name1,name2,...` can register different api entries; by default there is only entry of "pub"
+  - `HTTP2_CERT_DIR` can specify custom certificate directory (defaults to ./certs)
 
-- run sub: `PUB_URL=ws://pubserver/sub/<entry> SUB_CONFIG=./config.json node sub/index.js`
+- run sub: `PUB_URL=https://pubserver/sub/<entry> SUB_CONFIG=./config.json node sub/index.js`
   - `PUB_LB`: how to deal with load balance; `roundrobin` and `idbind`
     - `roundrobin`: one request, one sub instance
-    - `idbind`: one request id, one sub instance; all websocket uses idbind no matter `PUB_LB`'s value
+    - `idbind`: one request id, one sub instance
     - by default, no load balance; only one sub instance can register for a specific channel
   - `PUB_LB_N`: how many max sub instances can registered for the specific channel
 
-- try `curl 'http://pubserver/pub/region/site/helloworld?a=1'` to visit the target service from pub via http
-- try websocket client to connect to `ws://pubserver/wspub/region` to visit the target service from pub via websocket
+- try `curl -k 'https://pubserver/pub/region/site/helloworld?a=1'` to visit the target service from pub via HTTP2
+- WebSocket traffic is still supported and bridged through the HTTP2 internal communication
+
+### SSL Certificates
+
+Self-signed certificates are provided in the `certs/` directory. For production use, replace with proper SSL certificates.
 
 - `webpack` can pack pub/sub as standalone JS files as `dist/pub.js` and `dist/sub.js` respectively
 

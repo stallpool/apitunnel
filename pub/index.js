@@ -111,6 +111,7 @@ function handleWebSocketConnect(stream, headers, router) {
 function main() {
    const Bridge = require('./bridge').Bridge;
    const bridge = new Bridge();
+   const { createWebSocketServer } = require('./websocket_server');
 
    const api_router = {
       ping: (stream, headers, opt) => {
@@ -119,6 +120,8 @@ function main() {
       },
       // Test endpoint for server-to-client messaging
       broadcast: bridge.handleTestMessage(),
+      // HTTP2 TCP tunnel endpoint
+      tcp: bridge.handleTcpTunnel(),
       // Store bridge reference for WebSocket handling
       _bridge: bridge,
    };
@@ -136,9 +139,17 @@ function main() {
 
    const server = createHttp2Server(api_router);
 
+   // Create separate WebSocket server for wstunnel compatibility
+   const wsServer = createWebSocketServer(bridge);
+   const wsPort = i_env.server.port + 1; // Use port 5002 for WebSocket
+
    server.listen(i_env.server.port, i_env.server.host, () => {
       console.log(`APITUNNEL-pub HTTP2 is listening at ${i_env.server.host}:${i_env.server.port} ...`);
-      console.log(`APITUNNEL-pub WebSocket over HTTP2 (RFC 8441) enabled ...`);
+   });
+
+   wsServer.listen(wsPort, i_env.server.host, () => {
+      console.log(`APITUNNEL-pub WebSocket server is listening at ${i_env.server.host}:${wsPort} ...`);
+      console.log(`APITUNNEL-pub WebSocket bridging enabled for wstunnel compatibility ...`);
    });
 }
 

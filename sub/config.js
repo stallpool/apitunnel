@@ -32,9 +32,26 @@ function getRawConfig() {
 
 function renderUrl(mode, region, site, remain) {
    const obj = config.data?.tunnel?.[mode]?.[region];
-   if (!obj || !obj.url) return null;
+   if (!obj) return null;
+
+   // For TCP mode, return host and port separately
+   if (mode === 'tcp') {
+      if (!obj.host || obj.port === undefined) return null;
+
+      const host = expandString(obj.host, region, site, remain);
+      const port = expandString(obj.port.toString(), region, site, remain);
+
+      return { host, port: parseInt(port) };
+   }
+
+   // For other modes, return URL string
+   if (!obj.url) return null;
+   return expandString(obj.url, region, site, remain);
+}
+
+function expandString(str, region, site, remain) {
    let expand = false;
-   return obj.url.split('&<').map(z => {
+   return str.split('&<').map(z => {
       if (expand) {
          const i = z.indexOf('>');
          if (i < 0) return '';

@@ -220,8 +220,14 @@ class Bridge {
          }
 
          const m = JSON.parse(data.toString());
-         console.log('[D] Parsed response:', { id: m.id, hasData: !!m.data, code: m.code });
-         await this.bridgeHttpRes(stream, m);
+         console.log('[D] Parsed response:', { id: m.id, hasData: !!m.data, code: m.code, mode: m.mode });
+
+         // Route to correct handler based on mode
+         if (m.mode === 'tcp' || m.mode === 'ws') {
+            await this.bridgeWsRes(stream, m);
+         } else {
+            await this.bridgeHttpRes(stream, m);
+         }
       } catch (err) {
          console.log('[E] Error in handleSubResponse:', err);
          safeRespond(stream, { headers: { ':status': 400 }, body: 'Invalid response' });
@@ -244,6 +250,7 @@ class Bridge {
          const queue = this.taskQueue[entry] || [];
          if (queue.length > 0) {
             const task = queue.shift();
+            console.log('[D] Dequeuing task for entry:', entry, 'ID:', task.id, 'mode:', task.mode || 'http', 'act:', task.act, 'hasData:', !!task.data);
             safeRespond(stream, {
                headers: { ':status': 200, 'content-type': 'application/json' },
                body: JSON.stringify(task)
@@ -411,41 +418,35 @@ class Bridge {
             });
             this.task[id] = task;
 
-            // Send WebSocket open request via HTTP2
-            try {
-               const session = dst._http2Session || dst;
-               const reqStream = session.request({
-                  ':method': 'POST',
-                  ':path': `/ws/${id}`,
-                  'content-type': 'application/json'
-               });
-               reqStream.end(JSON.stringify({ id, mode: 'ws', act: 'open', uri: ws._meta_.url }));
-            } catch (err) {
-               delete this.task[id];
-               try { ws.terminate(); } catch(_) { }
+            console.log('[D] WebSocket opened, queuing open request for ID:', id);
+
+            // Queue WebSocket open request for sub to pick up
+            if (!this.taskQueue[entry]) {
+               this.taskQueue[entry] = [];
             }
+            this.taskQueue[entry].push({
+               id,
+               mode: 'ws',
+               act: 'open',
+               uri: ws._meta_.url
+            });
          }).bind(this),
          onClose: ((ws, local) => {
             const id = local.pubid;
             if (!id) return;
+            console.log('[D] WebSocket closed, queuing close request for ID:', id);
             const task = this.task[id];
             delete this.task[id];
-            const lb = this.subConnections[entry];
-            if (lb) {
-               const dst = lb.getOne(id);
-               lb.cancelOne(id);
-               if (dst) {
-                  try {
-                     const session = dst._http2Session || dst;
-                     const reqStream = session.request({
-                        ':method': 'POST',
-                        ':path': `/ws/${id}`,
-                        'content-type': 'application/json'
-                     });
-                     reqStream.end(JSON.stringify({ id, mode: 'ws', act: 'close' }));
-                  } catch (err) {}
-               }
+
+            // Queue WebSocket close request for sub to pick up
+            if (!this.taskQueue[entry]) {
+               this.taskQueue[entry] = [];
             }
+            this.taskQueue[entry].push({
+               id,
+               mode: 'ws',
+               act: 'close'
+            });
          }).bind(this),
          onError: ((err, ws, local) => { }).bind(this),
       };
@@ -454,8 +455,7 @@ class Bridge {
    bridgeWsReq(entry) {
       return (async (ws, local, m) => {
          const lb = this.subConnections[entry];
-         const dst = lb && lb.getOne(local.pubid);
-         if (!dst) {
+         if (!lb || !local.pubid) {
             try { ws.terminate(); } catch(_) { }
             return;
          }
@@ -464,28 +464,60 @@ class Bridge {
             try { ws.terminate(); } catch(_) { }
             return;
          }
-         const data = {
-            id: local.pubid,
-            mode: 'ws',
-            data: m.toString('base64'),
-         };
-         await task.init;
 
+         console.log('[D] WebSocket data received, queuing for ID:', local.pubid, 'size:', m.length, 'type:', typeof m);
+
+         // Try to parse as JSON for TCP messages
+         let tcpMessage = null;
          try {
-            const session = dst._http2Session || dst;
-            const reqStream = session.request({
-               ':method': 'POST',
-               ':path': `/ws/${local.pubid}`,
-               'content-type': 'application/json'
+            tcpMessage = JSON.parse(m.toString());
+         } catch (e) {
+            // Not JSON, treat as regular WebSocket data
+         }
+
+         if (!this.taskQueue[entry]) {
+            this.taskQueue[entry] = [];
+         }
+
+         if (tcpMessage && tcpMessage.type) {
+            // This is a TCP message from our TCP wrapper
+            console.log('[D] TCP message received:', tcpMessage.type, 'connId:', tcpMessage.connId);
+            this.taskQueue[entry].push({
+               id: local.pubid,
+               mode: 'tcp',
+               type: tcpMessage.type,
+               connId: tcpMessage.connId,
+               host: tcpMessage.host,
+               port: tcpMessage.port,
+               data: tcpMessage.data,
+               uri: task.path // Use the WebSocket path for config lookup
             });
-            reqStream.end(JSON.stringify(data));
-         } catch (err) {
-            try { ws.terminate(); } catch(_) { }
+         } else {
+            // Regular WebSocket data
+            const data = Buffer.isBuffer(m) ? m.toString('base64') : Buffer.from(m).toString('base64');
+            console.log('[D] WebSocket data queued, base64 length:', data.length);
+            this.taskQueue[entry].push({
+               id: local.pubid,
+               mode: 'ws',
+               data: data,
+            });
          }
       }).bind(this);
    }
 
    async bridgeWsRes(responseStream, m) {
+      // Handle TCP responses
+      if (m.mode === 'tcp') {
+         // Check if this is an HTTP2 TCP tunnel response
+         const task = this.task[m.id];
+         if (task && task.type === 'http2_tcp') {
+            await this.bridgeHttp2TcpRes(responseStream, m);
+         } else {
+            await this.bridgeTcpRes(responseStream, m);
+         }
+         return;
+      }
+
       const wsobj = this.task[m.id];
       if (!wsobj) return;
       if (m.act === 'close') {
@@ -521,6 +553,29 @@ class Bridge {
          safeRespond(responseStream, { headers: { ':status': 200 }, body: 'OK' });
       } catch (err) {}
       return;
+   }
+
+   async bridgeTcpRes(responseStream, m) {
+      console.log('[D] TCP response:', m.type, 'connId:', m.connId, 'hasData:', !!m.data);
+
+      const wsobj = this.task[m.id];
+      if (!wsobj || !wsobj.ws) {
+         console.log('[D] TCP response: no WebSocket found for ID:', m.id);
+         safeRespond(responseStream, { headers: { ':status': 200 }, body: 'OK' });
+         return;
+      }
+
+      try {
+         // Forward TCP response to WebSocket client (TCP wrapper)
+         wsobj.ws.send(JSON.stringify(m));
+      } catch (err) {
+         console.log('[E] TCP response send error:', err);
+      }
+
+      // Send response back to sub
+      try {
+         safeRespond(responseStream, { headers: { ':status': 200 }, body: 'OK' });
+      } catch (err) {}
    }
 
    handleWebSocketConnect(stream, headers, entry, path) {
@@ -744,6 +799,167 @@ class Bridge {
             }
          }, 5000);
       };
+   }
+
+   // HTTP2 TCP tunnel handler
+   handleTcpTunnel() {
+      return (stream, headers, opt) => {
+         console.log('[D] HTTP2 TCP tunnel request:', headers[':path']);
+
+         const path = headers[':path'];
+         if (!path.startsWith('/tcp/')) {
+            safeRespond(stream, { headers: { ':status': 404 }, body: 'Not found' });
+            return;
+         }
+
+         const pathParts = path.split('/');
+         const action = pathParts[2]; // connect, data, close
+
+         if (action === 'connect') {
+            this.handleHttp2TcpConnect(stream, headers, opt);
+         } else {
+            safeRespond(stream, { headers: { ':status': 404 }, body: 'Invalid action' });
+         }
+      };
+   }
+
+   handleHttp2TcpConnect(stream, headers, opt) {
+      console.log('[D] HTTP2 TCP connect request');
+
+      // Accept the connection
+      stream.respond({ ':status': 200, 'content-type': 'application/json' });
+
+      let id;
+      for (id = http_max_id+1; id < ws_max_id && this.task[id]; id++);
+      if (id === ws_max_id) {
+         stream.write(JSON.stringify({ type: 'error', error: 'Rate limit exceeded' }));
+         stream.end();
+         return;
+      }
+
+      const task = {
+         ts: new Date().getTime(),
+         id,
+         stream,
+         type: 'http2_tcp',
+         connections: new Map() // connId -> connection info
+      };
+
+      this.task[id] = task;
+      console.log('[D] HTTP2 TCP tunnel established, ID:', id);
+
+      // Handle incoming data from HTTP2 client
+      let buffer = '';
+      stream.on('data', (data) => {
+         buffer += data.toString();
+
+         // Process complete JSON messages (one per line)
+         const lines = buffer.split('\n');
+         buffer = lines.pop(); // Keep incomplete line in buffer
+
+         lines.forEach(line => {
+            if (line.trim()) {
+               try {
+                  const message = JSON.parse(line);
+                  this.handleHttp2TcpMessage(id, message);
+               } catch (err) {
+                  console.log('[E] HTTP2 TCP message parse error:', err);
+               }
+            }
+         });
+      });
+
+      stream.on('close', () => {
+         console.log('[D] HTTP2 TCP tunnel closed:', id);
+         const task = this.task[id];
+         if (task) {
+            // Close all connections for this tunnel
+            task.connections.forEach((conn, connId) => {
+               this.queueTcpMessage('pub', id, 'close', connId);
+            });
+         }
+         delete this.task[id];
+      });
+
+      stream.on('error', (err) => {
+         console.log('[E] HTTP2 TCP tunnel error:', err);
+         delete this.task[id];
+      });
+   }
+
+   handleHttp2TcpMessage(tunnelId, message) {
+      const { connId, type, host, port, data } = message;
+      console.log('[D] HTTP2 TCP message:', type, 'connId:', connId, 'tunnelId:', tunnelId);
+
+      const task = this.task[tunnelId];
+      if (!task) return;
+
+      if (type === 'connect') {
+         // Store connection info
+         task.connections.set(connId, { host, port });
+
+         // Queue TCP connect request for sub
+         this.queueTcpMessage('pub', tunnelId, 'connect', connId, host, port);
+      } else if (type === 'data') {
+         // Queue TCP data for sub
+         this.queueTcpMessage('pub', tunnelId, 'data', connId, null, null, data);
+      } else if (type === 'close') {
+         // Remove connection and queue close for sub
+         task.connections.delete(connId);
+         this.queueTcpMessage('pub', tunnelId, 'close', connId);
+      }
+   }
+
+   queueTcpMessage(entry, tunnelId, type, connId, host = null, port = null, data = null) {
+      if (!this.taskQueue[entry]) {
+         this.taskQueue[entry] = [];
+      }
+
+      const message = {
+         id: tunnelId,
+         mode: 'tcp',
+         type: type,
+         connId: connId,
+         uri: '/ssh/-/' // Default to SSH config
+      };
+
+      if (host) message.host = host;
+      if (port) message.port = port;
+      if (data) message.data = data;
+
+      this.taskQueue[entry].push(message);
+   }
+
+   // Handle HTTP2 TCP responses from sub
+   async bridgeHttp2TcpRes(stream, m) {
+      console.log('[D] HTTP2 TCP response:', m.type, 'connId:', m.connId, 'tunnelId:', m.id);
+
+      const task = this.task[m.id];
+      if (!task || task.type !== 'http2_tcp') {
+         console.log('[D] HTTP2 TCP response: no tunnel found for ID:', m.id);
+         safeRespond(stream, { headers: { ':status': 200 }, body: 'OK' });
+         return;
+      }
+
+      try {
+         // Forward TCP response to HTTP2 client
+         const response = {
+            connId: m.connId,
+            type: m.type
+         };
+
+         if (m.error) response.error = m.error;
+         if (m.data) response.data = m.data;
+
+         task.stream.write(JSON.stringify(response) + '\n');
+      } catch (err) {
+         console.log('[E] HTTP2 TCP response send error:', err);
+      }
+
+      // Send response back to sub
+      try {
+         safeRespond(stream, { headers: { ':status': 200 }, body: 'OK' });
+      } catch (err) {}
    }
 }
 

@@ -35,7 +35,9 @@ func main() {
 	}
 	log.Printf("APITUNNEL-pub is listening at %s:%d ...", cfg.Host, cfg.Port)
 
-	srv := &http.Server{Handler: b}
+	srv := &http.Server{
+		Handler: b,
+	}
 	errc := make(chan error, 1)
 	go func() {
 		if cfg.CA != "" {

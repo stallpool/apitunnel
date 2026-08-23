@@ -74,11 +74,13 @@ type Bridge struct {
 	token   string // hmac hash of cfg.Token; empty disables sub auth
 	entries map[string]bool
 
-	mu    sync.Mutex
-	lbs   map[string]lb.LoadBalance
-	tasks map[int]*task
-	taskc int
-	hid   int
+	mu     sync.Mutex
+	lbs    map[string]lb.LoadBalance
+	tasks  map[int]*task
+	taskc  int
+	hid    int
+	subs   int // total SSE subscriber connections
+	maxSub int // global SSE connection cap from cfg.MaxSubs
 }
 
 func New(cfg env.Config) *Bridge {
@@ -87,6 +89,7 @@ func New(cfg env.Config) *Bridge {
 		entries: map[string]bool{},
 		lbs:     map[string]lb.LoadBalance{},
 		tasks:   map[int]*task{},
+		maxSub:  cfg.MaxSubs,
 	}
 	for _, e := range cfg.Entries {
 		e = strings.TrimSpace(e)
@@ -195,6 +198,11 @@ func (b *Bridge) handleSub(w http.ResponseWriter, r *http.Request, entry string)
 	lbN, _ := strconv.Atoi(q.Get("lb_n"))
 
 	b.mu.Lock()
+	if b.maxSub > 0 && b.subs >= b.maxSub {
+		b.mu.Unlock()
+		http.Error(w, "Too Many Subscribers", http.StatusServiceUnavailable)
+		return
+	}
 	if l := b.lbs[entry]; l != nil && !l.HasEmptySlot() {
 		b.mu.Unlock()
 		http.Error(w, "Too Many Subscribers", http.StatusServiceUnavailable)
@@ -213,6 +221,7 @@ func (b *Bridge) handleSub(w http.ResponseWriter, r *http.Request, entry string)
 	b.mu.Lock()
 	bal.AddConn(c)
 	b.lbs[entry] = bal
+	b.subs++
 	n := bal.CountConn()
 	b.mu.Unlock()
 	log.Printf(`[I] %q (%d) %s connected`, entry, n, c.IP)
@@ -230,6 +239,7 @@ func (b *Bridge) handleSub(w http.ResponseWriter, r *http.Request, entry string)
 		}
 		n2 = l.CountConn()
 	}
+	b.subs--
 	b.mu.Unlock()
 	if l != nil {
 		log.Printf(`[I] %q (%d) %s disconnected`, entry, n2, c.IP)
@@ -268,6 +278,7 @@ func (b *Bridge) handleSubPost(w http.ResponseWriter, r *http.Request, entry str
 // authOK verifies the subscriber token, when pub token auth is enabled.
 // The raw token may come from the X-Pub-Token header or the token query
 // param (the latter works with browser EventSource).
+// Uses constant-time comparison to prevent timing attacks.
 func (b *Bridge) authOK(r *http.Request) bool {
 	if b.token == "" {
 		return true
@@ -276,7 +287,11 @@ func (b *Bridge) authOK(r *http.Request) bool {
 	if raw == "" {
 		raw = r.URL.Query().Get("token")
 	}
-	return raw != "" && hash(raw, b.cfg.Salt) == b.token
+	if raw == "" {
+		return false
+	}
+	computed := hash(raw, b.cfg.Salt)
+	return hmac.Equal([]byte(computed), []byte(b.token))
 }
 
 // handleHTTPRes finishes a bridged request with the subscriber's response.

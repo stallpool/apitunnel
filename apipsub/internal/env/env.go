@@ -19,6 +19,8 @@ type Config struct {
 	Entries []string
 	// RateLimit caps in-flight bridged requests; 0 means unlimited.
 	RateLimit int
+	// MaxSubs caps total SSE subscriber connections; 0 means unlimited.
+	MaxSubs int
 }
 
 func Load() Config {
@@ -36,6 +38,7 @@ func Load() Config {
 		cfg.Entries = []string{"pub"}
 	}
 	cfg.RateLimit = getEnvInt("PUB_RATELIMIT", 0)
+	cfg.MaxSubs = getEnvInt("PUB_MAXSUBS", 1)
 	return cfg
 }
 

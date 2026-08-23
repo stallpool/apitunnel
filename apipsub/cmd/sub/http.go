@@ -56,6 +56,7 @@ func (s *Sub) handleHttp(m httpReq) {
 	if m.ID == 0 || m.Method == "" || m.URI == "" {
 		return
 	}
+	log.Printf("[D] %s %s %s", ts(), m.Method, m.URI)
 	res, err := s.processHttp(m)
 	if err != nil || res.redirect != "" || res.failed {
 		s.postRes(resMsg{Type: "res", ID: m.ID, Code: 500})

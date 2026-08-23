@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,27 @@ import (
 	"apitunnel/apipsub/internal/sseclient"
 	"apitunnel/apipsub/internal/subenv"
 )
+
+// retryLogger writes connection-level logs to stdout so reconnection attempts
+// are visible alongside access traces.
+var retryLogger = log.New(os.Stdout, "", 0)
+
+// backoff computes the retry delay with exponential backoff:
+// 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 512s, 1024s, 2048s, 3600s (capped).
+func backoff(attempt int) time.Duration {
+	const (
+		base    = 2
+		capSecs = 3600
+	)
+	if attempt < 0 {
+		attempt = 0
+	}
+	d := base << attempt // 2^(attempt+1) via shift
+	if d > capSecs {
+		d = capSecs
+	}
+	return time.Duration(d) * time.Second
+}
 
 const helpMsg = `
 Usage:
@@ -62,13 +84,17 @@ func main() {
 		log.Printf(`[I] %s loadbalancer: %s (%d)`, ts(), cfg.LB, cfg.LBN)
 	}
 	// watchdog: (re)connect until the process is stopped.
+	attempt := 0
 	for {
 		if err := s.run(); err != nil {
-			log.Printf("[I] %s disconnected: %v", ts(), err)
+			retryLogger.Printf("[I] %s disconnected: %v", ts(), err)
 		} else {
-			log.Printf("[I] %s disconnected", ts())
+			retryLogger.Printf("[I] %s disconnected", ts())
 		}
-		time.Sleep(10 * time.Second)
+		delay := backoff(attempt)
+		attempt++
+		retryLogger.Printf("[I] %s reconnect in %s", ts(), delay)
+		time.Sleep(delay)
 	}
 }
 

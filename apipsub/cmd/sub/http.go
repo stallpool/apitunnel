@@ -10,9 +10,13 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
+
+// accessLogger writes HTTP access traces to stdout.
+var accessLogger = log.New(os.Stdout, "", 0)
 
 // httpTimeout bounds each bridged backend request (the JS sub used 20s).
 const httpTimeout = 20 * time.Second
@@ -56,7 +60,7 @@ func (s *Sub) handleHttp(m httpReq) {
 	if m.ID == 0 || m.Method == "" || m.URI == "" {
 		return
 	}
-	log.Printf("[D] %s %s %s", ts(), m.Method, m.URI)
+	accessLogger.Printf("[D] %s %s %s", ts(), m.Method, m.URI)
 	res, err := s.processHttp(m)
 	if err != nil || res.redirect != "" || res.failed {
 		s.postRes(resMsg{Type: "res", ID: m.ID, Code: 500})
@@ -175,7 +179,7 @@ func (s *Sub) postRes(m resMsg) {
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		log.Printf("[E] %s post: %v", ts(), err)
+		accessLogger.Printf("[E] %s post: %v", ts(), err)
 		return
 	}
 	resp.Body.Close()

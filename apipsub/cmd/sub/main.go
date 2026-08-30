@@ -33,6 +33,11 @@ func backoff(attempt int) time.Duration {
 	if attempt < 0 {
 		attempt = 0
 	}
+	if attempt >= 11 {
+		// 2^(attempt+1) already exceeds the cap here; the early return also
+		// keeps the shift from overflowing to 0 for huge attempt counts.
+		return capSecs * time.Second
+	}
 	d := base << attempt // 2^(attempt+1) via shift
 	if d > capSecs {
 		d = capSecs
@@ -94,10 +99,16 @@ func main() {
 	// watchdog: (re)connect until the process is stopped.
 	attempt := 0
 	for {
-		if err := s.run(); err != nil {
+		connected, err := s.run()
+		if err != nil {
 			retryLogger.Printf("[I] %s disconnected: %v", ts(), err)
 		} else {
 			retryLogger.Printf("[I] %s disconnected", ts())
+		}
+		if connected {
+			// The connection did succeed, so the next drop must not inherit
+			// the old backoff: start over at 2s.
+			attempt = 0
 		}
 		delay := backoff(attempt)
 		attempt++
@@ -118,22 +129,24 @@ func normalizePubURL(u string) string {
 	return u
 }
 
-// run connects to the pub and dispatches tasks until the stream ends.
-func (s *Sub) run() error {
+// run connects to the pub and dispatches tasks until the stream ends. It
+// also reports whether the connection was established at least once, which
+// the watchdog uses to reset the reconnect backoff.
+func (s *Sub) run() (bool, error) {
 	log.Printf(`[I] %s connecting to %q ...`, ts(), s.pubURL)
 	stream, err := sseclient.Dial(context.Background(), s.pubURL, s.cfg.Token, s.cfg.LB, s.cfg.LBN)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer stream.Close()
 	log.Printf("[I] %s connected", ts())
 	for {
 		msg, err, ok := stream.Read()
 		if !ok {
-			return nil
+			return true, nil
 		}
 		if err != nil {
-			return err
+			return true, err
 		}
 		s.dispatch(msg)
 	}

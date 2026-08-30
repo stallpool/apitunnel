@@ -50,10 +50,18 @@ config.json example:
   {
     "tunnel": {
       "http": {
-        "cowk": { "url": "http://&<region>.local/&<remain>" }
+        "cowk": {
+          "url": "http://&<region>.local/&<remain>",
+          "include": ["^/api/"],
+          "exclude": ["^/api/admin/"]
+        }
       }
     }
-  }`
+  }
+
+  include/exclude are optional lists of regexes matched against the request
+  path ("/" + remain). With include, only matching paths are bridged; with
+  exclude, matching paths are rejected. Rejected requests get 404.`
 
 // Sub is a subscriber: it keeps an SSE stream to the pub and bridges http
 // requests to the configured backends.

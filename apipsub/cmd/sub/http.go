@@ -53,6 +53,8 @@ type httpResult struct {
 	headers  map[string]string
 	redirect string
 	failed   bool
+	// code is the status to report back on failure (defaults to 500).
+	code int
 }
 
 // handleHttp executes a bridged request and posts the result back to the pub.
@@ -63,7 +65,14 @@ func (s *Sub) handleHttp(m httpReq) {
 	accessLogger.Printf("[D] %s %s %s", ts(), m.Method, m.URI)
 	res, err := s.processHttp(m)
 	if err != nil || res.redirect != "" || res.failed {
-		s.postRes(resMsg{Type: "res", ID: m.ID, Code: 500})
+		code := res.code
+		if code == 0 {
+			code = 500
+		}
+		if err != nil {
+			accessLogger.Printf("[W] %s reject %s: %v", ts(), m.URI, err)
+		}
+		s.postRes(resMsg{Type: "res", ID: m.ID, Code: code})
 		return
 	}
 	s.postRes(resMsg{
@@ -85,6 +94,18 @@ func (s *Sub) processHttp(m httpReq) (httpResult, error) {
 	region := parts[2]
 	site := parts[3]
 	remain := strings.Join(parts[4:], "/")
+
+	// Security check: apply the entry's include/exclude regex list to the
+	// request path ("/" + remain, query string stripped). Rejected requests
+	// look like unknown routes (404).
+	uriPath := "/" + remain
+	if i := strings.IndexByte(uriPath, '?'); i >= 0 {
+		uriPath = uriPath[:i]
+	}
+	if !s.config.Allowed("http", region, uriPath) {
+		return httpResult{code: http.StatusNotFound, failed: true},
+			fmt.Errorf("uri %q not allowed by include/exclude rules of region %q", uriPath, region)
+	}
 
 	target := s.config.RenderURL("http", region, site, remain)
 	if target == "" {

@@ -74,7 +74,11 @@ Environment variables:
 {
   "tunnel": {
     "http": {
-      "test": { "url": "http://&<site>.&<region>.local/&<remain>" }
+      "test": {
+        "url": "http://&<site>.&<region>.local/&<remain>",
+        "include": ["^/api/"],
+        "exclude": ["^/api/admin/"]
+      }
     }
   }
 }
@@ -83,6 +87,22 @@ Environment variables:
 So `GET /pub/test/blog/this-is-a-test` reaches
 `http://blog.test.local/this-is-a-test`. The file is reloaded automatically
 when its mtime changes.
+
+### URL filtering (include / exclude)
+
+Each entry may restrict which backend paths are bridged:
+
+- `include`: list of regexes; when present, the request path (`"/" + remain`,
+  query string stripped) must match **at least one** pattern.
+- `exclude`: list of regexes; the request path must match **none** of them.
+- Both lists may be combined (include is checked first). When neither is
+  set, every path is allowed (unchanged behavior).
+- Rejected requests are never forwarded to the backend; the sub answers
+  `404` (indistinguishable from an unknown route).
+- Invalid regexes are logged at load time and skipped.
+
+Example: with `"include": ["^/api/"]`, `/pub/test/-/api/v1/test` is bridged
+but `/pub/test/-/admin/list/users` gets `404`.
 
 ## Sub protocol (SSE)
 
